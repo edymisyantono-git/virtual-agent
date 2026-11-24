@@ -66,9 +66,70 @@ public class Orchestrator
         }
         else
         {
-            AddChat(p, "agent", IsActive("support") ? "support" : "intake", StatusReport(p));
+            await AnswerCustomerAsync(p, text, rt.Cts.Token);
         }
         _store.Save(p);
+    }
+
+    /// After intake, the customer talks to Customer Support, which answers from the project's real state.
+    private async Task AnswerCustomerAsync(Project p, string question, CancellationToken ct)
+    {
+        var def = _reg.Require(IsActive("support") ? "support" : "intake");
+        _store.Publish(p, "typing", new { agentId = def.Id, on = true });
+        try
+        {
+            var system = $"You are the {def.Role} at {_reg.Config.Company}. The customer is asking about their project. " +
+                         "Answer in the customer's language, briefly (at most about 120 words), using ONLY the facts given. Never invent progress or results. " +
+                         "When they ask where the results or documents are: all deliverables are in the Documents tab on the right side of the project page; " +
+                         "each opens with a click, and the 'Download all (.zip)' button there saves every document at once. Name the most relevant documents. " +
+                         "If a fact is not given, say you will check with the team. Reply with plain text only, no json block.";
+            var msg = $"PROJECT FACTS\n{ProjectFacts(p)}\n\nRECENT CHAT\n" +
+                      string.Join("\n", p.Chat.TakeLast(8).Select(c => $"{(c.Role == "customer" ? "Customer" : "Team")}: {c.Text}")) +
+                      $"\n\nCUSTOMER QUESTION: {question}";
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var (result, model) = await CallAsync(p, def, "chat", system, [("user", msg)], ct);
+            var reply = Regex.Replace(result.Text, "```json.*?```", "", RegexOptions.Singleline).Trim();
+            Record(p, def, "chat", 1, model, result, "done", "Answered a customer question", sw.ElapsedMilliseconds);
+            AddChat(p, "agent", def.Id, reply.Length > 0 ? reply : StatusReport(p));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Support answer failed for {Project}", p.Id);
+            AddChat(p, "agent", def.Id, StatusReport(p));
+        }
+        finally
+        {
+            _store.Publish(p, "typing", new { agentId = def.Id, on = false });
+        }
+    }
+
+    private string ProjectFacts(Project p)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"Project: {p.Title} ({p.Id}). Status: {p.Status}.");
+        sb.AppendLine(StatusReport(p));
+        sb.AppendLine("Customer brief: " + string.Join("; ", Slots.Select(k => $"{k}: {p.Brief.GetValueOrDefault(k, "(unknown)")}")));
+        List<ArtifactRef> docs; List<AgentRun> runs;
+        lock (p) { docs = p.Artifacts.Where(a => !a.Helper).ToList(); runs = p.Runs.ToList(); }
+        sb.AppendLine($"DOCUMENTS ({docs.Count}, newest last):");
+        foreach (var a in docs)
+        {
+            var summary = runs.LastOrDefault(r => r.AgentId == a.AgentId && r.Instance == a.Instance && r.StageId == a.StageId && r.Status != "delegate")?.Summary;
+            sb.AppendLine($"- {a.Title} [{a.Name}]{(string.IsNullOrWhiteSpace(summary) ? "" : $": {summary}")}");
+        }
+        if (p.PendingGate != null) sb.AppendLine($"Waiting for the owner's approval: {p.PendingGate.Label}");
+        List<VcEvent> events;
+        lock (p) events = p.Events.Where(e => e.Type == "gate" && e.Data.GetValueOrDefault("status")?.ToString() != "waiting").ToList();
+        if (events.Count > 0)
+        {
+            sb.AppendLine("OWNER DECISIONS (approval gates):");
+            foreach (var e in events)
+            {
+                var gateNote = e.Data.GetValueOrDefault("note")?.ToString();
+                sb.AppendLine($"- {e.Ts:yyyy-MM-dd HH:mm} UTC {e.Data.GetValueOrDefault("label")}: {e.Data.GetValueOrDefault("status")}{(string.IsNullOrWhiteSpace(gateNote) ? "" : $" ({gateNote})")}");
+            }
+        }
+        return sb.ToString();
     }
 
     private async Task IntakeTurnAsync(Project p, CancellationToken ct)

@@ -226,6 +226,27 @@ app.MapPost("/api/projects/{id}/stop", (string id, Orchestrator orc) =>
     return Results.Ok();
 });
 
+app.MapGet("/api/projects/{id}/export", (string id) =>
+{
+    var p = store.Get(id);
+    if (p == null) return Results.NotFound();
+    using var ms = new MemoryStream();
+    using (var zip = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+    {
+        var index = new System.Text.StringBuilder($"# {p.Title}\n\nProject {p.Id}, status {p.Status}, cost USD {p.Cost:N2}.\n\n");
+        foreach (var a in p.Artifacts)
+        {
+            var text = store.ReadArtifact(p, a.Name);
+            if (text == null) continue;
+            var path = (a.Helper ? "parts/" : "") + a.Name;
+            using (var w = new StreamWriter(zip.CreateEntry(path).Open())) w.Write(text);
+            index.AppendLine($"- [{a.Title}]({path})");
+        }
+        using (var w = new StreamWriter(zip.CreateEntry("INDEX.md").Open())) w.Write(index.ToString());
+    }
+    return Results.File(ms.ToArray(), "application/zip", $"{p.Id}-documents.zip");
+});
+
 app.MapGet("/api/projects/{id}/artifacts/{name}", (string id, string name) =>
 {
     var p = store.Get(id);

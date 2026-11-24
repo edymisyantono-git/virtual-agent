@@ -201,6 +201,9 @@
     $("#ribbon").innerHTML = S.meta.pipeline.map((s, i) => `<div class="st ${S.stageIdx[s.id] || ""}" title="${esc(s.title)}">${String(i + 1).padStart(2, "0")} ${esc(s.title)}</div>`).join("");
   }
 
+  // Agents answer in light Markdown; show bold, inline code and bullets without turning the bubble into a document.
+  const chatText = t => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/^\s*[-*] /gm, "\u2022 ");
+
   function addMsg(m) {
     hideTyping();
     const a = m.agentId ? agent(m.agentId) : null;
@@ -208,7 +211,7 @@
     div.className = "msg " + (m.role === "customer" ? "customer" : "agent");
     const av = m.role === "customer" ? "YOU" : (a?.initials || "AI");
     const color = m.role === "customer" ? "" : `style="background:var(--d-${a?.department || "support"})"`;
-    div.innerHTML = `<span class="av" ${color}>${esc(av)}</span><div><div class="who">${m.role === "customer" ? "You" : esc(a?.role || "Agent")}</div><div class="bubble">${esc(m.text)}</div></div>`;
+    div.innerHTML = `<span class="av" ${color}>${esc(av)}</span><div><div class="who">${m.role === "customer" ? "You" : esc(a?.role || "Agent")}</div><div class="bubble">${chatText(m.text)}</div></div>`;
     $("#messages").appendChild(div);
     $("#messages").scrollTop = $("#messages").scrollHeight;
   }
@@ -237,7 +240,8 @@
     if (!S.artifacts.length) { $("#docs").innerHTML = `<p class="empty">Documents appear here as each agent finishes: proposal, BRD, plan, designs, code, test reports.</p>`; return; }
     const by = {};
     S.artifacts.forEach(a => (by[a.stageId] ||= []).push(a));
-    $("#docs").innerHTML = S.meta.pipeline.filter(s => by[s.id]).map(s => `<div><h4 class="eyebrow">${esc(s.title)}</h4>${by[s.id].map(a => {
+    const dl = DEMO || !S.id ? "" : `<a class="btn primary dl-all" href="/api/projects/${encodeURIComponent(S.id)}/export" download>Download all (.zip)</a>`;
+    $("#docs").innerHTML = dl + S.meta.pipeline.filter(s => by[s.id]).map(s => `<div><h4 class="eyebrow">${esc(s.title)}</h4>${by[s.id].map(a => {
       const ag = agent(a.agentId);
       return `<button data-doc="${esc(a.name)}" data-title="${esc(a.title)}"><span class="av-sm" style="background:var(--d-${ag?.department})">${esc(ag?.initials)}</span><span>${esc(a.title)}</span></button>`;
     }).join("")}</div>`).join("");

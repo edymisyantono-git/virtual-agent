@@ -19,6 +19,10 @@ public class SimulatedLlm : ILlmClient
         var answered = req.Messages.Last().Text.Contains("CUSTOMER ANSWERS");
         var last = req.Messages.Last().Text;
 
+        // Customer questions after intake: answer from the facts in the prompt.
+        var q = Regex.Match(last, @"CUSTOMER QUESTION: (.+)$", RegexOptions.Singleline);
+        if (q.Success) return Done(req, AnswerQuestion(last, q.Groups[1].Value.Trim()));
+
         // Delegation demo: a role allowed to split does so once its questions are answered; helpers write parts; the lead merges.
         var part = Regex.Match(last, @"YOUR SUBTASK \((\d+) of (\d+)\): (.+)");
         if (part.Success)
@@ -57,6 +61,21 @@ public class SimulatedLlm : ILlmClient
         };
         var input = (req.System.Length + req.Messages.Sum(x => x.Text.Length)) / 4;
         return new LlmResult(text, input, text.Length / 4 + Random.Shared.Next(200, 900), "end_turn");
+    }
+
+    private static string AnswerQuestion(string prompt, string question)
+    {
+        var indo = Regex.IsMatch(question, @"\b(dimana|di mana|mana|apa|bagaimana|hasil|sudah|kapan|berapa)\b", RegexOptions.IgnoreCase);
+        var docs = Regex.Matches(prompt, @"^- (.+?) \[", RegexOptions.Multiline).Select(m => m.Groups[1].Value).ToList();
+        var status = Regex.Match(prompt, @"^(\d+ of \d+ stages.+)$", RegexOptions.Multiline).Groups[1].Value;
+        if (Regex.IsMatch(question, @"hasil|dokumen|result|document|output|deliverable|dimana|di mana|where", RegexOptions.IgnoreCase))
+        {
+            var top = string.Join(", ", docs.Take(5));
+            return indo
+                ? $"Semua hasil ada di tab Documents di sisi kanan halaman proyek ({docs.Count} dokumen). Klik salah satu untuk membacanya, atau tekan 'Download all (.zip)' untuk mengunduh semuanya sekaligus. Yang paling penting: {top}."
+                : $"All results are in the Documents tab on the right of the project page ({docs.Count} documents). Click one to read it, or press 'Download all (.zip)' to save them all. The key ones: {top}.";
+        }
+        return indo ? $"Status terkini: {status}" : $"Current status: {status}";
     }
 
     private static LlmResult Done(LlmRequest req, string text) =>

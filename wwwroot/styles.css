@@ -156,6 +156,7 @@ table.reg tr.off td:not(:first-child) { opacity: .45; }
 .feed li.k-ok .txt { color: var(--ok); font-weight: 600; }
 .doclist { padding: 8px 12px; display: flex; flex-direction: column; gap: 10px; }
 .doclist h4 { margin: 0 0 4px; }
+.doclist .dl-all { align-self: flex-start; text-decoration: none; }
 .doclist button { display: flex; width: 100%; text-align: left; gap: 8px; align-items: center; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 6px 8px; margin-bottom: 4px; }
 .doclist button:hover { border-color: var(--signal); }
 .modelrows { padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; }
