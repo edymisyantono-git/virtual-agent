@@ -434,11 +434,16 @@
         if (d.complete) { viz.setAgent("intake", 0, "done"); feed("ok", "intake", t("Brief complete. Handing over to Business Development."), null, ts); }
         break;
       case "title": S.title = d.title; $("#projTitle").textContent = d.title; if (!DEMO && !S.replaying) refreshProjects(S.id); break;
-      case "status":
+      case "status": {
+        // Elapsed counts working time only: while paused or stopped the clock stands still (also when replayed)
+        const at = new Date(ts).getTime(), still = ["Paused", "Stopped", "Failed"].includes(d.status);
+        if (still && S.idleSince == null) S.idleSince = at;
+        else if (!still && S.idleSince != null) { S.idleMs += at - S.idleSince; S.idleSince = null; }
         setStatus(d.status);
         if (d.status === "Completed") { viz.celebrate(); feed("ok", null, t("Project is live. The cycle continues with usage data."), null, ts); if (!S.replaying) toast(t("Project delivered. Support and Data now run the service.")); }
         if (d.status === "Failed" || d.status === "Stopped") feed("loop", null, t(d.status === "Failed" ? "The pipeline stopped with an error." : "Project stopped."), null, ts);
         break;
+      }
       case "stage":
         S.stageIdx[d.stageId] = d.status; renderRibbon(); viz.stage(d.stageId, d.status);
         if (d.status === "running") feed("info", null, t("{0} started", stageTitle(d.stageId)) + (d.round > 1 ? t(" \u00b7 round {0}", d.round) : ""), null, ts);
@@ -612,15 +617,15 @@
 
   setInterval(() => {
     if (!S.firstTs) return;
-    const end = ["Completed", "Stopped", "Failed"].includes(S.status) ? S.lastTs : (DEMO ? S.lastTs : Date.now());
-    const sec = Math.max(0, Math.round((end - S.firstTs) / 1000));
+    const end = S.idleSince ?? (["Completed", "Stopped", "Failed"].includes(S.status) ? S.lastTs : (DEMO ? S.lastTs : Date.now()));
+    const sec = Math.max(0, Math.round((end - S.firstTs - (S.idleMs || 0)) / 1000));
     const two = n => String(n).padStart(2, "0");
     $("#elapsed").textContent = `${two(Math.floor(sec / 3600))}:${two(Math.floor(sec / 60) % 60)}:${two(sec % 60)}`;
   }, 500);
 
   // ---------------- project lifecycle ----------------
   function resetFloor() {
-    Object.assign(S, { status: "Intake", title: "", brief: {}, artifacts: [], tokens: 0, cost: 0, firstTs: null, lastTs: null, gate: null, stageIdx: {}, appExists: false, appUrl: null, live: {}, modules: [], modLog: {}, usdStop: null, handover: null, release: null });
+    Object.assign(S, { status: "Intake", title: "", brief: {}, artifacts: [], tokens: 0, cost: 0, firstTs: null, lastTs: null, idleMs: 0, idleSince: null, gate: null, stageIdx: {}, appExists: false, appUrl: null, live: {}, modules: [], modLog: {}, usdStop: null, handover: null, release: null });
     renderModules();
     renderApp();
     for (const k in tweens) delete tweens[k];
