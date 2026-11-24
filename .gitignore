@@ -1,0 +1,6 @@
+bin/
+obj/
+data/
+agent-runner/node_modules/
+agent-runner/workspace/
+*.user
