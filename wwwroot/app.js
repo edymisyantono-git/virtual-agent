@@ -138,6 +138,7 @@
     <label>Default model for all projects <small>saved to agents.json</small><select class="field" id="adModel"></select></label>
     <label>Override for this project only<select class="field" id="adOverride"></select></label>
     <label>Effort<select class="field" id="adEffort"><option value="">Company default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="max">Max</option></select></label>
+    <label>Max output tokens per reply <small>hard cap, thinking included. Lower = cheaper</small><input class="field mono" type="number" id="adMaxOut" min="500" max="64000" step="500"></label>
     <p class="note">Which one runs: project override, then global override (Registry), then this default, then the department, then the company default.</p>
     <div class="row"><button class="btn primary" type="submit" id="adSave">Save</button><button class="btn" type="button" id="adOpenReg">Open Registry</button></div>
     <p class="note" id="adMsg"></p>
@@ -466,6 +467,8 @@
     $("#adModel").innerHTML = `<option value="">${esc(inherited)}</option>` + S.meta.models.map(m => modelOption(m, a.model)).join("");
     $("#adOverride").innerHTML = `<option value="">No override</option>` + S.meta.models.map(m => modelOption(m, S.overrides[id])).join("");
     $("#adEffort").value = a.effort || "";
+    $("#adMaxOut").value = a.maxOutputTokens || "";
+    $("#adMaxOut").disabled = DEMO;
     $("#adActive").checked = !a.disabled;
     $("#adActive").disabled = DEMO || id === "intake";
     $("#adActive").closest("label").title = id === "intake" ? "Customer Intake starts every request, so it can't be switched off." : "";
@@ -481,8 +484,9 @@
     const id = $("#agentDlg").dataset.agent, a = agent(id);
     try {
       const model = $("#adModel").value, effort = $("#adEffort").value, disabled = !$("#adActive").checked;
-      if ((a.model || "") !== model || (a.effort || "") !== effort || !!a.disabled !== disabled)
-        S.meta = await api.send("PUT", `/registry/agents/${id}`, { model, effort, disabled });
+      const maxOutputTokens = Number($("#adMaxOut").value) || a.maxOutputTokens;
+      if ((a.model || "") !== model || (a.effort || "") !== effort || !!a.disabled !== disabled || maxOutputTokens !== a.maxOutputTokens)
+        S.meta = await api.send("PUT", `/registry/agents/${id}`, { model, effort, disabled, maxOutputTokens });
       const ov = $("#adOverride").value || null;
       if (S.id && (S.overrides[id] || null) !== ov)
         S.overrides = await api.send("PUT", `/projects/${S.id}/overrides`, { ...S.overrides, [id]: ov });

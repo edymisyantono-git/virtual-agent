@@ -77,6 +77,26 @@ halaman **Registry** di aplikasi (perubahan disimpan kembali ke file).
 - **Lebar panel kiri dan kanan** bisa diatur dengan menyeret garis pemisah (atau tombol panah
   saat pemisah fokus). Klik dua kali untuk kembali ke lebar default. Tersimpan per browser.
 
+## Mengendalikan biaya token
+
+Run live pertama (proyek APD, 11 modul) menghabiskan $13 dan belum selesai, karena tiap agent
+menerima *semua* dokumen sebelumnya (±409 ribu token input per panggilan developer). Sekarang:
+
+- **`reads` per agent** (agents.json): daftar peran yang dokumennya dibaca. `null` = semua,
+  `[]` = hanya brief customer. Yang dikirim hanya **versi terbaru** tiap dokumen, ditambah hasil
+  kerja agent itu sendiri pada ronde perbaikan. Satu dokumen dipotong di 40.000 karakter.
+  Contoh: Backend membaca BRD, rencana, dan arsitektur, bukan kode Frontend.
+- **`maxOutputTokens` per agent** (atau `defaults.maxOutputTokens`, bisa diubah di panel agent):
+  batas keras satu balasan, termasuk token thinking. Prompt juga meminta panjang jawaban
+  sekitar 25% dari batas itu dalam kata, supaya thinking dan blok handoff tetap muat.
+  - Engine `agent-sdk`: balasan yang melewati batas **ditolak** SDK, bukan dipotong. Runner
+    otomatis mengulang sekali dengan permintaan "tulis setengah panjangnya".
+  - Engine `api`: balasan dipotong di batas (`max_tokens`) dan muncul peringatan di Activity.
+- **`budget.maxTokensPerProject`**: gate budget selalu menunggu keputusan Anda, walau
+  *Auto-approve gates* aktif.
+
+Tips: untuk uji live pertama di mesin baru, pakai lingkup kecil (2-3 fitur) dan budget 300.000 token.
+
 ## Kontrak antar agent
 
 Setiap agent menulis dokumen Markdown dan menutupnya dengan blok handoff:

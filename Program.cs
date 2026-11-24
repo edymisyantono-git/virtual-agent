@@ -59,7 +59,8 @@ object Meta() => new
     agents = registry.Config.Agents.Select(a =>
     {
         var r = registry.ResolveModel(a.Id);
-        return new { a.Id, a.Role, a.Initials, a.Department, a.Model, a.Effort, a.MaxInstances, a.Spawnable, a.CanAskCustomer, a.Persona, a.Disabled,
+        return new { a.Id, a.Role, a.Initials, a.Department, a.Model, a.Effort, a.MaxInstances, a.Spawnable, a.CanAskCustomer, a.Persona, a.Disabled, a.Reads,
+            maxOutputTokens = a.MaxOutputTokens ?? registry.Config.Defaults.MaxOutputTokens,
             resolvedModel = r.Model, modelSource = r.Source };
     }),
 };
@@ -74,6 +75,11 @@ app.MapPut("/api/registry/agents/{id}", (string id, AgentPatch patch) =>
     if (patch.Effort != null) a.Effort = patch.Effort == "" ? null : patch.Effort;
     if (patch.MaxInstances is > 0) a.MaxInstances = patch.MaxInstances.Value;
     if (patch.Persona is { Length: > 0 }) a.Persona = patch.Persona;
+    if (patch.MaxOutputTokens is { } mot)
+    {
+        if (mot is < 500 or > 64000) return Results.BadRequest(new { error = "Max output tokens must be between 500 and 64,000." });
+        a.MaxOutputTokens = mot;
+    }
     if (patch.Disabled is { } off)
     {
         if (off && a.Id == "intake")
@@ -225,7 +231,7 @@ partial class Program
     static readonly JsonSerializerOptions SseJson = new(AgentRegistry.Json) { WriteIndented = false };
 }
 
-record AgentPatch(string? Model, string? Effort, int? MaxInstances, string? Persona, bool? Disabled);
+record AgentPatch(string? Model, string? Effort, int? MaxInstances, string? Persona, bool? Disabled, int? MaxOutputTokens);
 record NewAgent(string Id, string Role, string? Initials, string Department, string? Model, string? Persona, string? StageId, string? NewStageTitle, bool Spawnable, int? MaxInstances);
 record NewProject(bool AutoApprove);
 record ChatIn(string Text);

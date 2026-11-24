@@ -257,8 +257,10 @@ public class Orchestrator
         var system = $"You are the {def.Role} at {_reg.Config.Company}, a full-stack digital company staffed by AI agents. {def.Persona}\n\n" +
                      "Work only from the brief and the prior work you are given; state assumptions instead of inventing customer facts.\n" +
                      "Write your deliverable in English as a Markdown document. End your reply with one fenced json block:\n" +
-                     "```json\n{\"status\": \"done | need_info | blocked\", \"summary\": \"<one sentence for the team>\", \"open_questions\": [], \"data\": {}}\n```";
-        var msg = BuildContext(p, st, def, module, round, note, answers);
+                     "```json\n{\"status\": \"done | need_info | blocked\", \"summary\": \"<one sentence for the team>\", \"open_questions\": [], \"data\": {}}\n```\n" +
+                     $"LENGTH: stay under about {TargetWords(def):N0} words in total. Be dense: tables and short bullets, no repetition, no restating the brief or other teams' documents. " +
+                     "For code, give the key files and the non-obvious logic only, not boilerplate. The final json block is mandatory, so leave room for it.";
+        var msg = BuildContext(p, st, def, inst, module, round, note, answers);
 
         _store.Publish(p, "agent", new { agentId = def.Id, instance = inst, stageId = st.Id, status = "working", module, round,
             model = _reg.ResolveModel(def.Id, p.ModelOverrides).Model, source = _reg.ResolveModel(def.Id, p.ModelOverrides).Source });
@@ -275,6 +277,8 @@ public class Orchestrator
             throw;
         }
         var handoff = ParseHandoff(result.Text);
+        if (result.StopReason is "max_tokens" or "length")
+            _store.Publish(p, "log", new { level = "warn", text = $"{def.Role} hit its output limit ({OutputLimit(def):N0} tokens); the document may be cut short. Raise its limit in the agent settings." });
 
         if (handoff.Status == "need_info" && def.CanAskCustomer && handoff.OpenQuestions.Count > 0 && answers == null)
         {
@@ -287,7 +291,7 @@ public class Orchestrator
 
         var name = $"{st.Id}-{def.Id}{(inst > 1 ? $"-{inst}" : "")}{(round > 1 ? $"-r{round}" : "")}.md";
         var title = def.Role + (module != null ? $" · {module}" : "") + (round > 1 ? $" (round {round})" : "");
-        var art = new ArtifactRef { Name = name, Title = title, AgentId = def.Id, StageId = st.Id, Round = round };
+        var art = new ArtifactRef { Name = name, Title = title, AgentId = def.Id, StageId = st.Id, Round = round, Instance = inst };
         _store.WriteArtifact(p, art, result.Text);
         _store.Publish(p, "artifact", art);
 
@@ -309,7 +313,31 @@ public class Orchestrator
         return new StageResult(def, inst, handoff);
     }
 
-    private string BuildContext(Project p, StageDef st, AgentDef def, string? module, int round, string? note, string? answers)
+    private int OutputLimit(AgentDef def) => def.MaxOutputTokens is > 0 ? def.MaxOutputTokens.Value : _reg.Config.Defaults.MaxOutputTokens;
+
+    /// Soft length target, far below the hard cap: thinking tokens count against the cap (a 300-word reply
+    /// used about 800 thinking tokens in a test), and the final handoff block must fit.
+    private int TargetWords(AgentDef def) => Math.Max(100, (int)(OutputLimit(def) * 0.25 / 50) * 50);
+
+    private const int MaxDocChars = 40_000;   // ~10k tokens per document, a safety net for oversized replies
+
+    /// Documents this agent should see: the newest version of each document from the roles it reads,
+    /// plus its own previous work when it is redoing a task.
+    private List<ArtifactRef> RelevantDocs(Project p, AgentDef def, int inst, int round)
+    {
+        List<ArtifactRef> all;
+        lock (p) all = p.Artifacts.ToList();
+        return all
+            .Where(a => a.AgentId == def.Id
+                ? round > 1 && a.Instance == inst
+                : def.Reads == null || def.Reads.Contains(a.AgentId))
+            .GroupBy(a => (a.AgentId, a.Instance))
+            .Select(g => g.OrderByDescending(a => a.Round).First())
+            .OrderBy(a => all.IndexOf(a))
+            .ToList();
+    }
+
+    private string BuildContext(Project p, StageDef st, AgentDef def, int inst, string? module, int round, string? note, string? answers)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"PROJECT: {p.Title} ({p.Id})");
@@ -321,13 +349,16 @@ public class Orchestrator
         sb.AppendLine("\nCUSTOMER BRIEF:");
         foreach (var k in Slots) sb.AppendLine($"- {k}: {(p.Brief.TryGetValue(k, out var v) ? v : "(unknown)")}");
 
-        List<ArtifactRef> prior;
-        lock (p) prior = p.Artifacts.ToList();
-        if (prior.Count > 0)
+        var docs = RelevantDocs(p, def, inst, round);
+        if (docs.Count > 0)
         {
-            sb.AppendLine("\nPRIOR WORK FROM THE TEAM:");
-            foreach (var a in prior)
-                sb.AppendLine($"\n===== {a.Title} [{a.Name}] =====\n{_store.ReadArtifact(p, a.Name)}");
+            sb.AppendLine("\nRELEVANT WORK FROM THE TEAM (latest versions):");
+            foreach (var a in docs)
+            {
+                var text = _store.ReadArtifact(p, a.Name) ?? "";
+                if (text.Length > MaxDocChars) text = text[..MaxDocChars] + "\n[...document shortened to save tokens...]";
+                sb.AppendLine($"\n===== {a.Title} [{a.Name}] =====\n{text}");
+            }
         }
         return sb.ToString();
     }
@@ -421,7 +452,7 @@ public class Orchestrator
     private async Task<(LlmResult, ResolvedModel)> CallAsync(Project p, AgentDef def, string stageId, string system, List<(string, string)> messages, CancellationToken ct)
     {
         var model = _reg.ResolveModel(def.Id, p.ModelOverrides);
-        var req = new LlmRequest(def.Id, model.Model, _reg.ResolveEffort(def.Id), _reg.Config.Defaults.MaxTokens, system, messages);
+        var req = new LlmRequest(def.Id, model.Model, _reg.ResolveEffort(def.Id), OutputLimit(def), system, messages);
         var res = await _llm.CompleteAsync(req, p, ct);
         return (res, model);
     }

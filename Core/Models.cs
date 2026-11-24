@@ -21,6 +21,8 @@ public class DefaultsDef
     public string Model { get; set; } = "claude-sonnet-5-5";
     public string Effort { get; set; } = "medium";
     public int MaxTokens { get; set; } = 16000;
+    /// Hard cap on one agent reply (thinking included) when the agent has no limit of its own.
+    public int MaxOutputTokens { get; set; } = 8000;
 }
 
 public class ModelDef
@@ -54,6 +56,11 @@ public class AgentDef
     public int MaxInstances { get; set; } = 1;
     public bool Spawnable { get; set; }
     public bool CanAskCustomer { get; set; }
+    /// Agent ids whose documents this role reads. null = everything produced so far; [] = only the customer brief.
+    /// Only the newest version of each document is sent, plus this agent's own previous work on a rework round.
+    public List<string>? Reads { get; set; }
+    /// Hard cap on one reply from this agent; falls back to defaults.maxOutputTokens.
+    public int? MaxOutputTokens { get; set; }
     /// Temporarily switched off: the orchestrator skips this agent (and a stage with no active agents).
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Disabled { get; set; }
@@ -130,6 +137,7 @@ public class ArtifactRef
     public string AgentId { get; set; } = "";
     public string StageId { get; set; } = "";
     public int Round { get; set; } = 1;
+    public int Instance { get; set; } = 1;
 }
 
 public class AgentRun

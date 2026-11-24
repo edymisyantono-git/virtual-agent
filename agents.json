@@ -1,4 +1,4 @@
-﻿// Virtual Company registry.
+// Virtual Company registry.
 // Add a position = add an entry to "agents" and put its id in a "pipeline" stage.
 // Model resolution (first match wins):
 //   project override [agent] > project override ["*"] > global override [agent] > global override ["*"]
@@ -8,43 +8,44 @@
   "defaults": {
     "model": "claude-sonnet-5-5",
     "effort": "medium",
-    "maxTokens": 16000
+    "maxTokens": 16000,
+    "maxOutputTokens": 8000
   },
   "models": [
     {
       "id": "claude-fable-5-2",
       "label": "Fable 5.2",
       "tier": "fable",
-      "inputPrice": 8.0,
-      "outputPrice": 40.0
+      "inputPrice": 8,
+      "outputPrice": 40
     },
     {
       "id": "claude-fable-5-1",
       "label": "Fable 5.1",
       "tier": "fable",
-      "inputPrice": 10.0,
-      "outputPrice": 50.0
+      "inputPrice": 10,
+      "outputPrice": 50
     },
     {
       "id": "claude-opus-5-5",
       "label": "Opus 5.5",
       "tier": "opus",
-      "inputPrice": 4.0,
-      "outputPrice": 20.0
+      "inputPrice": 4,
+      "outputPrice": 20
     },
     {
       "id": "claude-sonnet-5-5",
       "label": "Sonnet 5.5",
       "tier": "sonnet",
-      "inputPrice": 2.0,
-      "outputPrice": 10.0
+      "inputPrice": 2,
+      "outputPrice": 10
     },
     {
       "id": "claude-haiku-5-5",
       "label": "Haiku 5.5",
       "tier": "haiku",
-      "inputPrice": 0.10,
-      "outputPrice": 0.50
+      "inputPrice": 0.1,
+      "outputPrice": 0.5
     }
   ],
   "budget": {
@@ -92,6 +93,8 @@
       "maxInstances": 20,
       "spawnable": false,
       "canAskCustomer": false,
+      "reads": [],
+      "maxOutputTokens": 1500,
       "greeting": "Hi, I\u0027m the intake assistant at Nusantara Digital Works. Tell me about the problem you want solved, and I\u0027ll make sure the right team picks it up.",
       "persona": "You run the first conversation with a new customer. Find out, one question at a time: the business problem, who the users are and how many, the 3-5 core features, systems it must integrate with, and constraints (deadline, budget). Be warm and brief. Reply in the language the customer writes in.",
       "outputs": []
@@ -104,6 +107,8 @@
       "maxInstances": 1,
       "spawnable": false,
       "canAskCustomer": false,
+      "reads": [],
+      "maxOutputTokens": 5000,
       "persona": "You qualify the opportunity and write a proposal: problem summary, proposed solution, scope in/out, phased timeline in weeks, team composition, and a quotation in IDR with a line per phase. State assumptions explicitly.",
       "outputs": [
         "proposal"
@@ -117,6 +122,10 @@
       "maxInstances": 1,
       "spawnable": false,
       "canAskCustomer": true,
+      "reads": [
+        "bizdev"
+      ],
+      "maxOutputTokens": 9000,
       "persona": "You write the Business Requirements Document: stakeholders, as-is and to-be process (numbered steps), business rules (BR-01...), functional requirements as user stories with acceptance criteria (Given/When/Then), non-functional requirements, and a requirement traceability table. If a requirement that changes the design is unknown, return status need_info with at most 3 precise questions.",
       "outputs": [
         "brd"
@@ -130,6 +139,11 @@
       "maxInstances": 1,
       "spawnable": false,
       "canAskCustomer": false,
+      "reads": [
+        "business_analyst",
+        "bizdev"
+      ],
+      "maxOutputTokens": 5000,
       "persona": "You are the orchestrator. Break the approved requirements into modules, write a work breakdown with owners and week numbers, list risks, and decide how many developer instances to staff. Put the decision in the handoff data as {\u0022modules\u0022: [..], \u0022instances\u0022: {\u0022frontend_dev\u0022: n, \u0022backend_dev\u0022: n, \u0022qa\u0022: 1}}.",
       "outputs": [
         "plan"
@@ -143,6 +157,11 @@
       "maxInstances": 1,
       "spawnable": false,
       "canAskCustomer": false,
+      "reads": [
+        "business_analyst",
+        "project_manager"
+      ],
+      "maxOutputTokens": 7000,
       "persona": "You design the user experience: user journeys per role, screen inventory, a text wireframe for each key screen (layout regions and components), navigation map, and design tokens (colors, type scale, spacing).",
       "outputs": [
         "ux-spec"
@@ -157,6 +176,11 @@
       "maxInstances": 1,
       "spawnable": false,
       "canAskCustomer": false,
+      "reads": [
+        "business_analyst",
+        "project_manager"
+      ],
+      "maxOutputTokens": 8000,
       "persona": "You define the architecture: component diagram (as a text list of components and their connections), technology choices with one-line reasons, the database schema (tables, key columns, relations), REST API endpoints (method, path, purpose), authentication, and deployment topology.",
       "outputs": [
         "architecture"
@@ -171,6 +195,11 @@
       "maxInstances": 1,
       "spawnable": false,
       "canAskCustomer": false,
+      "reads": [
+        "bizdev",
+        "project_manager"
+      ],
+      "maxOutputTokens": 3000,
       "disabled": true,
       "persona": "You prepare the commercial side: statement of work summary, payment milestones tied to deliverables, invoice schedule, acceptance criteria for sign-off, warranty and support terms, and key contract clauses (IP, confidentiality, change requests).",
       "outputs": [
@@ -185,6 +214,13 @@
       "maxInstances": 4,
       "spawnable": true,
       "canAskCustomer": false,
+      "reads": [
+        "business_analyst",
+        "project_manager",
+        "uiux",
+        "architect"
+      ],
+      "maxOutputTokens": 10000,
       "persona": "You build the frontend for the module you are assigned: list the pages and components, then write the key component code. Follow the UX spec and the API contract exactly.",
       "outputs": [
         "frontend"
@@ -198,6 +234,12 @@
       "maxInstances": 5,
       "spawnable": true,
       "canAskCustomer": false,
+      "reads": [
+        "business_analyst",
+        "project_manager",
+        "architect"
+      ],
+      "maxOutputTokens": 10000,
       "persona": "You build the backend for the module you are assigned: endpoints, validation, business rules enforcement, and the key service code. Reference business rule ids (BR-xx) in comments where they are enforced.",
       "outputs": [
         "backend"
@@ -211,6 +253,11 @@
       "maxInstances": 1,
       "spawnable": false,
       "canAskCustomer": false,
+      "reads": [
+        "business_analyst",
+        "architect"
+      ],
+      "maxOutputTokens": 7000,
       "persona": "You write the database migration scripts (CREATE TABLE with keys, indexes and constraints), seed data, and the reporting views that the KPIs will need.",
       "outputs": [
         "database"
@@ -224,6 +271,14 @@
       "maxInstances": 3,
       "spawnable": true,
       "canAskCustomer": false,
+      "reads": [
+        "business_analyst",
+        "architect",
+        "frontend_dev",
+        "backend_dev",
+        "db_dev"
+      ],
+      "maxOutputTokens": 6000,
       "persona": "You test the build against the acceptance criteria: write test cases (id, steps, expected), the UAT scenario for every role, run them against the code you were given, and report defects with severity. Put {\u0022bugs\u0022: n, \u0022defects\u0022: [\u0022...\u0022]} in the handoff data; n = 0 means ready to release.",
       "outputs": [
         "test-report"
@@ -238,6 +293,13 @@
       "maxInstances": 1,
       "spawnable": false,
       "canAskCustomer": false,
+      "reads": [
+        "architect",
+        "backend_dev",
+        "db_dev",
+        "qa"
+      ],
+      "maxOutputTokens": 4000,
       "persona": "You review the architecture and code for security: authentication and authorization gaps, injection, secrets handling, data exposure, logging, and OWASP Top 10 items. Give each finding a severity and a fix. Block the release (status blocked) only for critical findings.",
       "outputs": [
         "security-review"
@@ -251,6 +313,13 @@
       "maxInstances": 1,
       "spawnable": false,
       "canAskCustomer": false,
+      "reads": [
+        "architect",
+        "db_dev",
+        "qa",
+        "security"
+      ],
+      "maxOutputTokens": 4000,
       "persona": "You prepare the release: CI/CD pipeline stages, environment configuration (staging, production), container/hosting setup, domain and SSL, database migration order, backup and rollback plan, and monitoring alerts.",
       "outputs": [
         "release-plan"
@@ -264,6 +333,12 @@
       "maxInstances": 1,
       "spawnable": false,
       "canAskCustomer": false,
+      "reads": [
+        "bizdev",
+        "business_analyst",
+        "project_manager"
+      ],
+      "maxOutputTokens": 3000,
       "disabled": true,
       "persona": "You plan the launch and adoption: audience segments, key messages, internal launch announcement text, onboarding/training plan, and adoption KPIs with targets.",
       "outputs": [
@@ -278,6 +353,11 @@
       "maxInstances": 1,
       "spawnable": false,
       "canAskCustomer": false,
+      "reads": [
+        "business_analyst",
+        "qa"
+      ],
+      "maxOutputTokens": 3000,
       "persona": "You set up operations after go-live: SLA tiers and response times, ticket categories, escalation path to engineering, a FAQ for end users, and the incident handling procedure.",
       "outputs": [
         "support-runbook"
@@ -291,6 +371,12 @@
       "maxInstances": 1,
       "spawnable": false,
       "canAskCustomer": false,
+      "reads": [
+        "business_analyst",
+        "architect",
+        "db_dev"
+      ],
+      "maxOutputTokens": 4000,
       "persona": "You define how success is measured: KPI list with formulas and the source tables, dashboard layout, the SQL for the top KPIs, and the first improvement hypotheses to feed back to the Project Manager.",
       "outputs": [
         "kpi-dashboard"

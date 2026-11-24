@@ -55,7 +55,7 @@ public class AgentSdkLlm : ILlmClient, IDisposable
 
     public async Task<LlmResult> CompleteAsync(LlmRequest req, Project project, CancellationToken ct)
     {
-        var job = new { agentId = req.AgentId, model = req.Model, effort = req.Effort, system = req.System, prompt = Flatten(req.Messages) };
+        var job = new { agentId = req.AgentId, model = req.Model, effort = req.Effort, maxOutputTokens = req.MaxTokens, system = req.System, prompt = Flatten(req.Messages) };
         var res = await _http.PostAsJsonAsync("/run", job, ct);
         var body = await res.Content.ReadFromJsonAsync<RunnerResult>(cancellationToken: ct)
                    ?? throw new InvalidOperationException("Empty answer from the agent runner.");
