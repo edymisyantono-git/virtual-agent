@@ -24,6 +24,8 @@ public class DefaultsDef
     public int MaxTokens { get; set; } = 16000;
     /// Hard cap on one agent reply (thinking included) when the agent has no limit of its own.
     public int MaxOutputTokens { get; set; } = 8000;
+    /// Language of the whole app: the UI, messages from the team, and the documents agents write. "en" or "id".
+    public string Language { get; set; } = "en";
 }
 
 public class ModelDef
@@ -37,7 +39,8 @@ public class ModelDef
 
 public class BudgetDef
 {
-    public long MaxTokensPerProject { get; set; } = 3_000_000;
+    /// Fresh input + output tokens per step (0 = off). Cache reads are not counted.
+    public long MaxTokensPerProject { get; set; }
     /// Dollar budget per project (0 = off). Tool-using agents re-read cached context every turn, so dollars
     /// are a better stop signal than raw token counts.
     public decimal MaxUsdPerProject { get; set; }
@@ -53,11 +56,16 @@ public class CodeModeDef
     public int MaxTurns { get; set; } = 60;
     /// Ports: the running app for you starts here; QA test runs use AppPort + 50.
     public int AppPort { get; set; } = 5300;
+    /// Sites agents may download libraries and open-licensed assets from (GET only; subdomains included).
+    /// Everything else stays blocked except localhost.
+    public List<string> AllowedHosts { get; set; } = new();
 }
 
 public class DepartmentDef
 {
     public string Name { get; set; } = "";
+    /// Translated display names by language code, e.g. {"id": "..."}; the English field is the fallback.
+    public Dictionary<string, string>? Names { get; set; }
     public string? Model { get; set; }
 }
 
@@ -65,6 +73,8 @@ public class AgentDef
 {
     public string Id { get; set; } = "";
     public string Role { get; set; } = "";
+    /// Translated display names by language code, e.g. {"id": "..."}; the English field is the fallback.
+    public Dictionary<string, string>? Names { get; set; }
     public string Initials { get; set; } = "";
     public string Department { get; set; } = "";
     public string? Model { get; set; }
@@ -83,7 +93,14 @@ public class AgentDef
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Disabled { get; set; }
     public string? Greeting { get; set; }
+    public Dictionary<string, string>? Greetings { get; set; }
     public string Persona { get; set; } = "";
+    /// Owner's rules for this role, one per item: what it must always do, and what it must never do.
+    /// They go into every prompt of the role with high priority (the model follows them; the app does not check them).
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? MustDo { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? MustNot { get; set; }
     public List<string> Outputs { get; set; } = new();
 }
 
@@ -91,6 +108,8 @@ public class StageDef
 {
     public string Id { get; set; } = "";
     public string Title { get; set; } = "";
+    /// Translated display names by language code, e.g. {"id": "..."}; the English field is the fallback.
+    public Dictionary<string, string>? Names { get; set; }
     public string Kind { get; set; } = "agents";
     public List<string> Agents { get; set; } = new();
     public GateDef? Gate { get; set; }
@@ -103,6 +122,8 @@ public class GateDef
 {
     public string Id { get; set; } = "";
     public string Label { get; set; } = "";
+    /// Translated display names by language code, e.g. {"id": "..."}; the English field is the fallback.
+    public Dictionary<string, string>? Names { get; set; }
 }
 
 public class LoopDef
@@ -115,7 +136,7 @@ public record ResolvedModel(string Model, string Source);
 
 // ---------- Project state ----------
 
-public enum ProjectStatus { Intake, Running, WaitingGate, WaitingCustomer, Completed, Stopped, Failed }
+public enum ProjectStatus { Intake, Running, WaitingGate, WaitingCustomer, Completed, Stopped, Failed, Paused }
 
 public class Project
 {
@@ -133,6 +154,13 @@ public class Project
     public Dictionary<string, string> StageStatus { get; set; } = new();
     public PendingGate? PendingGate { get; set; }
     public PendingQuestion? PendingQuestion { get; set; }
+    /// Every question an agent asked the customer, with the reply. All later agents read these, so nobody asks twice.
+    public List<CustomerAnswer> CustomerAnswers { get; set; } = new();
+    /// What is still wrong, by source ("QA: ...", "Security: ..."): shown to the owner, the support agent and the handover.
+    public List<string> OpenIssues { get; set; } = new();
+    /// Download sites the owner allowed / refused for this project when an agent asked (on top of codeMode.allowedHosts).
+    public List<string> AllowedHosts { get; set; } = new();
+    public List<string> RefusedHosts { get; set; } = new();
     public ProjectPlan? Plan { get; set; }
     /// Tokens added on top of budget.maxTokensPerProject each time you approve the budget gate.
     public long ExtraBudget { get; set; }
@@ -141,6 +169,8 @@ public class Project
     public string? AppUrl { get; set; }
     public long TokensIn { get; set; }
     public long TokensOut { get; set; }
+    /// Context re-read from the prompt cache (about a tenth of the price of fresh input); kept apart from TokensIn.
+    public long TokensCacheRead { get; set; }
     public decimal Cost { get; set; }
     public List<VcEvent> Events { get; set; } = new();
 }
@@ -177,6 +207,7 @@ public class AgentRun
     public string Summary { get; set; } = "";
     public int TokensIn { get; set; }
     public int TokensOut { get; set; }
+    public long TokensCacheRead { get; set; }
     public decimal Cost { get; set; }
     public long Ms { get; set; }
 }
@@ -193,6 +224,14 @@ public class PendingQuestion
 {
     public string AgentId { get; set; } = "";
     public List<string> Questions { get; set; } = new();
+}
+
+public class CustomerAnswer
+{
+    public string AgentId { get; set; } = "";
+    public string Role { get; set; } = "";
+    public List<string> Questions { get; set; } = new();
+    public string Reply { get; set; } = "";
 }
 
 public class ProjectPlan
@@ -220,7 +259,19 @@ public class Handoff
 }
 
 public record LlmRequest(string AgentId, string Model, string Effort, int MaxTokens, string System, List<(string Role, string Text)> Messages,
-    List<string>? Tools = null, string? Cwd = null, int MaxTurns = 1, decimal? MaxBudgetUsd = null);
+    List<string>? Tools = null, string? Cwd = null, int MaxTurns = 1, decimal? MaxBudgetUsd = null, Action<AgentProgress>? OnProgress = null,
+    List<string>? AllowedHosts = null);
+
+/// What a running agent is doing right now, reported every couple of seconds while it works.
+/// Phase: starting | thinking | writing | tool | retrying | rate_limited.
+public record AgentProgress(string Phase, string? Tool, string? Detail, int OutTokens, int Turns, int ElapsedSec, int IdleSec,
+    RetryInfo? Retry = null, RateLimitInfo? RateLimit = null)
+{
+    /// The per-reply output cap the tokens count toward (one reply; a tool run has many replies, so no cap is shown).
+    public int? MaxTokensHint(int cap) => Turns == 0 ? cap : null;
+}
+public record RetryInfo(int Attempt, int Max, int WaitMs, string? Error, int? Status);
+public record RateLimitInfo(string? Status, long? ResetsAt, string? Type, double? Utilization);
 
 /// CostUsd is set when the engine reports its own cost (Agent SDK); otherwise it is computed from agents.json prices.
-public record LlmResult(string Text, int InputTokens, int OutputTokens, string StopReason, decimal? CostUsd = null);
+public record LlmResult(string Text, int InputTokens, int OutputTokens, string StopReason, decimal? CostUsd = null, long CacheReadTokens = 0);

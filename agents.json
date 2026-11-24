@@ -9,7 +9,8 @@
     "model": "claude-sonnet-5-5",
     "effort": "medium",
     "maxTokens": 16000,
-    "maxOutputTokens": 8000
+    "maxOutputTokens": 8000,
+    "language": "en"
   },
   "models": [
     {
@@ -49,38 +50,73 @@
     }
   ],
   "budget": {
-    "maxTokensPerProject": 600000,
-    "maxUsdPerProject": 8
+    "maxTokensPerProject": 0,
+    "maxUsdPerProject": 10
+  },
+  "codeMode": {
+    "enabled": true,
+    "stack": "ASP.NET Core 9 \u002B SQLite (EF Core), plain HTML/JS in wwwroot",
+    "maxCallUsd": 3,
+    "maxTurns": 60,
+    "appPort": 5300,
+    "allowedHosts": []
   },
   "departments": {
     "support": {
-      "name": "Operations & Support",
+      "name": "Operations \u0026 Support",
+      "names": {
+        "id": "Operasional \u0026 Dukungan"
+      },
       "model": "claude-haiku-5-5"
     },
     "business": {
-      "name": "Business & Strategy"
+      "name": "Business \u0026 Strategy",
+      "names": {
+        "id": "Bisnis \u0026 Strategi"
+      }
     },
     "finance": {
-      "name": "Finance & Administration"
+      "name": "Finance \u0026 Administration",
+      "names": {
+        "id": "Keuangan \u0026 Administrasi"
+      }
     },
     "product": {
-      "name": "Product & Analysis",
+      "name": "Product \u0026 Analysis",
+      "names": {
+        "id": "Produk \u0026 Analisis"
+      },
       "model": "claude-opus-5-5"
     },
     "design": {
-      "name": "Design"
+      "name": "Design",
+      "names": {
+        "id": "Desain"
+      }
     },
     "engineering": {
-      "name": "Engineering"
+      "name": "Engineering",
+      "names": {
+        "id": "Rekayasa"
+      }
     },
     "infra": {
-      "name": "Infrastructure & Security"
+      "name": "Infrastructure \u0026 Security",
+      "names": {
+        "id": "Infrastruktur \u0026 Keamanan"
+      }
     },
     "marketing": {
-      "name": "Marketing & Growth"
+      "name": "Marketing \u0026 Growth",
+      "names": {
+        "id": "Pemasaran \u0026 Pertumbuhan"
+      }
     },
     "data": {
-      "name": "Data & Analytics"
+      "name": "Data \u0026 Analytics",
+      "names": {
+        "id": "Data \u0026 Analitik"
+      }
     }
   },
   "overrides": {},
@@ -88,6 +124,9 @@
     {
       "id": "intake",
       "role": "Customer Intake",
+      "names": {
+        "id": "Penerima Kebutuhan"
+      },
       "initials": "CI",
       "department": "support",
       "effort": "low",
@@ -96,18 +135,24 @@
       "canAskCustomer": false,
       "reads": [],
       "maxOutputTokens": 1500,
-      "greeting": "Hi, I'm the intake assistant at Nusantara Digital Works. Tell me about the problem you want solved, and I'll make sure the right team picks it up.",
+      "greeting": "Hi, I\u0027m the intake assistant at Nusantara Digital Works. Tell me about the problem you want solved, and I\u0027ll make sure the right team picks it up.",
+      "greetings": {
+        "id": "Halo, saya asisten penerima kebutuhan di Nusantara Digital Works. Ceritakan masalah yang ingin Anda selesaikan, dan saya pastikan tim yang tepat menanganinya."
+      },
       "persona": "You run the first conversation with a new customer. Find out, one question at a time: the business problem, who the users are and how many, the 3-5 core features, systems it must integrate with, and constraints (deadline, budget). Be warm and brief. Reply in the language the customer writes in.",
       "outputs": []
     },
     {
       "id": "bizdev",
       "role": "Business Development",
+      "names": {
+        "id": "Pengembangan Bisnis"
+      },
       "initials": "BD",
       "department": "business",
       "maxInstances": 2,
       "spawnable": false,
-      "canAskCustomer": false,
+      "canAskCustomer": true,
       "reads": [],
       "maxOutputTokens": 5000,
       "persona": "You qualify the opportunity and write a proposal: problem summary, proposed solution, scope in/out, phased timeline in weeks, team composition, and a quotation in IDR with a line per phase. State assumptions explicitly.",
@@ -118,6 +163,9 @@
     {
       "id": "business_analyst",
       "role": "Business Analyst",
+      "names": {
+        "id": "Analis Bisnis"
+      },
       "initials": "BA",
       "department": "product",
       "maxInstances": 3,
@@ -135,17 +183,20 @@
     {
       "id": "project_manager",
       "role": "Project Manager",
+      "names": {
+        "id": "Manajer Proyek"
+      },
       "initials": "PM",
       "department": "product",
       "maxInstances": 1,
       "spawnable": false,
-      "canAskCustomer": false,
+      "canAskCustomer": true,
       "reads": [
         "business_analyst",
         "bizdev"
       ],
       "maxOutputTokens": 5000,
-      "persona": "You are the orchestrator. Break the approved requirements into modules, write a work breakdown with owners and week numbers, list risks, and decide how many developer instances to staff. Put the decision in the handoff data as {\"modules\": [..], \"instances\": {\"frontend_dev\": n, \"backend_dev\": n, \"qa\": 1}}.",
+      "persona": "You are the orchestrator. Break the approved requirements into modules, write a work breakdown with owners and week numbers, list risks, and decide how many developer instances to staff. Put the decision in the handoff data as {\u0022modules\u0022: [..], \u0022instances\u0022: {\u0022frontend_dev\u0022: n, \u0022backend_dev\u0022: n, \u0022qa\u0022: 1}}.",
       "outputs": [
         "plan"
       ]
@@ -153,11 +204,14 @@
     {
       "id": "uiux",
       "role": "UI/UX Designer",
+      "names": {
+        "id": "Desainer UI/UX"
+      },
       "initials": "UX",
       "department": "design",
       "maxInstances": 2,
       "spawnable": false,
-      "canAskCustomer": false,
+      "canAskCustomer": true,
       "reads": [
         "business_analyst",
         "project_manager"
@@ -171,12 +225,15 @@
     {
       "id": "architect",
       "role": "Solution Architect",
+      "names": {
+        "id": "Arsitek Solusi"
+      },
       "initials": "SA",
       "department": "engineering",
       "model": "claude-opus-5-5",
       "maxInstances": 2,
       "spawnable": false,
-      "canAskCustomer": false,
+      "canAskCustomer": true,
       "reads": [
         "business_analyst",
         "project_manager"
@@ -189,19 +246,21 @@
     },
     {
       "id": "finance_legal",
-      "role": "Finance & Legal",
+      "role": "Finance \u0026 Legal",
+      "names": {
+        "id": "Keuangan \u0026 Legal"
+      },
       "initials": "FL",
       "department": "finance",
       "model": "claude-haiku-5-5",
       "maxInstances": 1,
       "spawnable": false,
-      "canAskCustomer": false,
+      "canAskCustomer": true,
       "reads": [
         "bizdev",
         "project_manager"
       ],
       "maxOutputTokens": 3000,
-      "disabled": true,
       "persona": "You prepare the commercial side: statement of work summary, payment milestones tied to deliverables, invoice schedule, acceptance criteria for sign-off, warranty and support terms, and key contract clauses (IP, confidentiality, change requests).",
       "outputs": [
         "contract"
@@ -210,11 +269,14 @@
     {
       "id": "frontend_dev",
       "role": "Frontend Developer",
+      "names": {
+        "id": "Pengembang Frontend"
+      },
       "initials": "FE",
       "department": "engineering",
       "maxInstances": 4,
       "spawnable": true,
-      "canAskCustomer": false,
+      "canAskCustomer": true,
       "reads": [
         "business_analyst",
         "project_manager",
@@ -222,10 +284,6 @@
         "architect"
       ],
       "maxOutputTokens": 10000,
-      "persona": "You build the pages for your assigned module as plain HTML/CSS/JavaScript in wwwroot that call the API with fetch. Follow the UX spec; keep it simple, clean and usable.",
-      "outputs": [
-        "frontend"
-      ],
       "tools": [
         "Read",
         "Write",
@@ -233,26 +291,29 @@
         "Glob",
         "Grep",
         "Bash"
+      ],
+      "persona": "You build the pages for your assigned module as plain HTML/CSS/JavaScript in wwwroot that call the API with fetch. Follow the UX spec; keep it simple, clean and usable.",
+      "outputs": [
+        "frontend"
       ]
     },
     {
       "id": "backend_dev",
       "role": "Backend Developer",
+      "names": {
+        "id": "Pengembang Backend"
+      },
       "initials": "BE",
       "department": "engineering",
       "maxInstances": 5,
       "spawnable": true,
-      "canAskCustomer": false,
+      "canAskCustomer": true,
       "reads": [
         "business_analyst",
         "project_manager",
         "architect"
       ],
       "maxOutputTokens": 10000,
-      "persona": "You build the server side for your assigned module: minimal API endpoints, validation, business rules (reference BR-xx in comments), authorization by role, and fake adapters for external systems.",
-      "outputs": [
-        "backend"
-      ],
       "tools": [
         "Read",
         "Write",
@@ -260,25 +321,28 @@
         "Glob",
         "Grep",
         "Bash"
+      ],
+      "persona": "You build the server side for your assigned module: minimal API endpoints, validation, business rules (reference BR-xx in comments), authorization by role, and fake adapters for external systems.",
+      "outputs": [
+        "backend"
       ]
     },
     {
       "id": "db_dev",
       "role": "Database Developer",
+      "names": {
+        "id": "Pengembang Basis Data"
+      },
       "initials": "DB",
       "department": "engineering",
       "maxInstances": 2,
       "spawnable": false,
-      "canAskCustomer": false,
+      "canAskCustomer": true,
       "reads": [
         "business_analyst",
         "architect"
       ],
       "maxOutputTokens": 7000,
-      "persona": "You own the data layer: EF Core entities, the DbContext with SQLite, seed data (demo users per role, sample catalog), and the queries the reports need. Create the database on startup (EnsureCreated or migrations).",
-      "outputs": [
-        "database"
-      ],
       "tools": [
         "Read",
         "Write",
@@ -286,16 +350,23 @@
         "Glob",
         "Grep",
         "Bash"
+      ],
+      "persona": "You own the data layer: EF Core entities, the DbContext with SQLite, seed data (demo users per role, sample catalog), and the queries the reports need. Create the database on startup (EnsureCreated or migrations).",
+      "outputs": [
+        "database"
       ]
     },
     {
       "id": "qa",
       "role": "QA Engineer",
+      "names": {
+        "id": "Penguji QA"
+      },
       "initials": "QA",
       "department": "engineering",
       "maxInstances": 3,
       "spawnable": true,
-      "canAskCustomer": false,
+      "canAskCustomer": true,
       "reads": [
         "business_analyst",
         "architect",
@@ -304,26 +375,29 @@
         "db_dev"
       ],
       "maxOutputTokens": 6000,
-      "persona": "You test the build against the acceptance criteria: write test cases (id, steps, expected), the UAT scenario for every role, run them against the code you were given, and report defects with severity. Put {\"bugs\": n, \"defects\": [\"...\"]} in the handoff data; n = 0 means ready to release.",
-      "outputs": [
-        "test-report"
-      ],
       "tools": [
         "Read",
         "Glob",
         "Grep",
         "Bash"
+      ],
+      "persona": "You test the build against the acceptance criteria: write test cases (id, steps, expected), the UAT scenario for every role, run them against the code you were given, and report defects with severity. Put {\u0022bugs\u0022: n, \u0022defects\u0022: [\u0022...\u0022]} in the handoff data; n = 0 means ready to release.",
+      "outputs": [
+        "test-report"
       ]
     },
     {
       "id": "security",
       "role": "Security Engineer",
+      "names": {
+        "id": "Insinyur Keamanan"
+      },
       "initials": "SE",
       "department": "infra",
-      "model": "claude-opus-5-5",
+      "model": "claude-sonnet-5-5",
       "maxInstances": 2,
       "spawnable": false,
-      "canAskCustomer": false,
+      "canAskCustomer": true,
       "reads": [
         "architect",
         "backend_dev",
@@ -331,24 +405,27 @@
         "qa"
       ],
       "maxOutputTokens": 4000,
-      "persona": "You review the architecture and code for security: authentication and authorization gaps, injection, secrets handling, data exposure, logging, and OWASP Top 10 items. Give each finding a severity and a fix. Block the release (status blocked) only for critical findings.",
-      "outputs": [
-        "security-review"
-      ],
       "tools": [
         "Read",
         "Glob",
         "Grep"
+      ],
+      "persona": "You review the architecture and code for security: authentication and authorization gaps, injection, secrets handling, data exposure, logging, and OWASP Top 10 items. Give each finding a severity and a fix. Block the release (status blocked) only for critical findings.",
+      "outputs": [
+        "security-review"
       ]
     },
     {
       "id": "devops",
       "role": "DevOps Engineer",
+      "names": {
+        "id": "Insinyur DevOps"
+      },
       "initials": "DO",
       "department": "infra",
       "maxInstances": 1,
       "spawnable": false,
-      "canAskCustomer": false,
+      "canAskCustomer": true,
       "reads": [
         "architect",
         "db_dev",
@@ -356,10 +433,6 @@
         "security"
       ],
       "maxOutputTokens": 4000,
-      "persona": "You make the app easy to run and hand over: a README with how to start it, the demo users and what to try first, sensible appsettings, and a check that `dotnet run` starts cleanly.",
-      "outputs": [
-        "release-plan"
-      ],
       "tools": [
         "Read",
         "Write",
@@ -367,23 +440,29 @@
         "Glob",
         "Grep",
         "Bash"
+      ],
+      "persona": "You make the app easy to run and hand over: a README with how to start it, the demo users and what to try first, sensible appsettings, and a check that \u0060dotnet run\u0060 starts cleanly.",
+      "outputs": [
+        "release-plan"
       ]
     },
     {
       "id": "marketing",
       "role": "Marketing Lead",
+      "names": {
+        "id": "Kepala Pemasaran"
+      },
       "initials": "MK",
       "department": "marketing",
       "maxInstances": 1,
       "spawnable": false,
-      "canAskCustomer": false,
+      "canAskCustomer": true,
       "reads": [
         "bizdev",
         "business_analyst",
         "project_manager"
       ],
       "maxOutputTokens": 3000,
-      "disabled": true,
       "persona": "You plan the launch and adoption: audience segments, key messages, internal launch announcement text, onboarding/training plan, and adoption KPIs with targets.",
       "outputs": [
         "launch-plan"
@@ -392,11 +471,14 @@
     {
       "id": "support",
       "role": "Customer Support",
+      "names": {
+        "id": "Layanan Pelanggan"
+      },
       "initials": "CS",
       "department": "support",
       "maxInstances": 1,
       "spawnable": false,
-      "canAskCustomer": false,
+      "canAskCustomer": true,
       "reads": [
         "business_analyst",
         "qa"
@@ -410,11 +492,14 @@
     {
       "id": "data_analyst",
       "role": "Data Analyst",
+      "names": {
+        "id": "Analis Data"
+      },
       "initials": "DA",
       "department": "data",
       "maxInstances": 2,
       "spawnable": false,
-      "canAskCustomer": false,
+      "canAskCustomer": true,
       "reads": [
         "business_analyst",
         "architect",
@@ -425,12 +510,44 @@
       "outputs": [
         "kpi-dashboard"
       ]
+    },
+    {
+      "id": "tech_writer",
+      "role": "Technical Writer",
+      "names": {
+        "id": "Penulis Teknis"
+      },
+      "initials": "TW",
+      "department": "support",
+      "maxInstances": 2,
+      "spawnable": false,
+      "canAskCustomer": false,
+      "reads": [
+        "bizdev",
+        "business_analyst",
+        "project_manager",
+        "uiux",
+        "architect",
+        "finance_legal",
+        "qa",
+        "security",
+        "devops",
+        "support"
+      ],
+      "maxOutputTokens": 16000,
+      "persona": "You write the client handover document. It is read by the customer, not by the team, and is exported to PDF. Write it in two parts. PART 1 \u0027Project summary\u0027: executive summary (what was asked, what was delivered, current state), objectives and scope, what was delivered per module with its status, the solution and its architecture in plain words, quality and security results (what was tested, what passed, open issues and their impact), how to run and deploy it, known limitations, recommended next steps, support and warranty. PART 2 \u0027User handbook\u0027: getting started (access, sign-in, roles), then a step-by-step guide per role and per main feature with numbered steps and what the user sees, administration tasks, troubleshooting and FAQ, and a short glossary. Use only facts from the team\u0027s documents and the project facts you are given; where something is not known, say what the customer should confirm. Never mention AI, agents, models, prompts, tokens or internal costs: write as the company delivering the project. Use clear headings (# for the two parts, ## and ### inside), numbered steps, and tables where they help.",
+      "outputs": [
+        "handover"
+      ]
     }
   ],
   "pipeline": [
     {
       "id": "discovery",
       "title": "Discovery chat",
+      "names": {
+        "id": "Obrolan kebutuhan"
+      },
       "kind": "chat",
       "agents": [
         "intake"
@@ -439,30 +556,45 @@
     {
       "id": "proposal",
       "title": "Proposal",
+      "names": {
+        "id": "Proposal"
+      },
       "kind": "agents",
       "agents": [
         "bizdev"
       ],
       "gate": {
         "id": "proposal",
-        "label": "Approve proposal & quotation"
+        "label": "Approve proposal \u0026 quotation",
+        "names": {
+          "id": "Setujui proposal \u0026 penawaran harga"
+        }
       }
     },
     {
       "id": "requirements",
       "title": "Requirements",
+      "names": {
+        "id": "Kebutuhan"
+      },
       "kind": "agents",
       "agents": [
         "business_analyst"
       ],
       "gate": {
         "id": "requirements",
-        "label": "Approve requirements (BRD)"
+        "label": "Approve requirements (BRD)",
+        "names": {
+          "id": "Setujui kebutuhan (BRD)"
+        }
       }
     },
     {
       "id": "planning",
       "title": "Planning",
+      "names": {
+        "id": "Perencanaan"
+      },
       "kind": "agents",
       "agents": [
         "project_manager"
@@ -470,7 +602,10 @@
     },
     {
       "id": "design",
-      "title": "Design & contract",
+      "title": "Design \u0026 contract",
+      "names": {
+        "id": "Desain \u0026 kontrak"
+      },
       "kind": "agents",
       "agents": [
         "uiux",
@@ -481,6 +616,9 @@
     {
       "id": "build",
       "title": "Build",
+      "names": {
+        "id": "Pembangunan"
+      },
       "kind": "agents",
       "agents": [
         "frontend_dev",
@@ -492,6 +630,9 @@
     {
       "id": "qa",
       "title": "Quality assurance",
+      "names": {
+        "id": "Uji kualitas"
+      },
       "kind": "agents",
       "agents": [
         "qa"
@@ -504,6 +645,9 @@
     {
       "id": "security",
       "title": "Security review",
+      "names": {
+        "id": "Tinjauan keamanan"
+      },
       "kind": "agents",
       "agents": [
         "security"
@@ -512,31 +656,44 @@
     {
       "id": "release",
       "title": "Release",
+      "names": {
+        "id": "Rilis"
+      },
       "kind": "agents",
       "agents": [
         "devops"
       ],
       "gate": {
         "id": "production",
-        "label": "Approve production deploy"
+        "label": "Approve production deploy",
+        "names": {
+          "id": "Setujui deploy ke produksi"
+        }
       }
     },
     {
       "id": "growth",
-      "title": "Launch & operate",
+      "title": "Launch \u0026 operate",
+      "names": {
+        "id": "Peluncuran \u0026 operasi"
+      },
       "kind": "agents",
       "agents": [
         "marketing",
         "support",
         "data_analyst"
       ]
+    },
+    {
+      "id": "handover",
+      "title": "Client handover",
+      "names": {
+        "id": "Serah terima klien"
+      },
+      "kind": "agents",
+      "agents": [
+        "tech_writer"
+      ]
     }
-  ],
-  "codeMode": {
-    "enabled": true,
-    "stack": "ASP.NET Core 9 + SQLite (EF Core), plain HTML/JS in wwwroot",
-    "maxCallUsd": 3,
-    "maxTurns": 60,
-    "appPort": 5300
-  }
+  ]
 }

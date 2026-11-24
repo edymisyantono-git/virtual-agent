@@ -13,7 +13,13 @@ public class SimulatedLlm : ILlmClient
 
     public async Task<LlmResult> CompleteAsync(LlmRequest req, Project p, CancellationToken ct)
     {
-        await Task.Delay(Random.Shared.Next(1400, 3600), ct);   // let the floor animation breathe
+        // Let the floor animation breathe, reporting progress like the live engine does.
+        var total = Random.Shared.Next(1400, 3600);
+        for (var step = 1; step <= 4; step++)
+        {
+            await Task.Delay(total / 4, ct);
+            req.OnProgress?.Invoke(new AgentProgress(step == 1 ? "thinking" : "writing", null, null, step * 180, 0, total * step / 4000, 0));
+        }
         var round = Regex.Match(req.Messages.Last().Text, @"ROUND (\d+)") is { Success: true } m ? int.Parse(m.Groups[1].Value) : 1;
         var module = Regex.Match(req.Messages.Last().Text, @"ASSIGNED MODULE: (.+)") is { Success: true } mm ? mm.Groups[1].Value.Trim() : null;
         var answered = req.Messages.Last().Text.Contains("CUSTOMER ANSWERS");
@@ -39,6 +45,17 @@ public class SimulatedLlm : ILlmClient
                 },
             }));
 
+        // A role the PM staffed in parallel can still call in helpers: each gets a new box after the staffed ones.
+        if (req.AgentId == "backend_dev" && round == 1 && module != null && !merging && req.System.Contains("SPLITTING WORK"))
+            return Done(req, Handoff("delegate", $"{module} has an API layer and a service layer; splitting it.", new
+            {
+                subtasks = new[]
+                {
+                    new { title = $"{module}: API endpoints", instructions = "Controllers, request/response models, validation." },
+                    new { title = $"{module}: services and rules", instructions = "Business rules and data access for the module." },
+                },
+            }));
+
         var text = req.AgentId switch
         {
             "intake" => Intake(p),
@@ -57,6 +74,7 @@ public class SimulatedLlm : ILlmClient
             "marketing" => Marketing(p),
             "support" => Support(),
             "data_analyst" => Data(p),
+            "tech_writer" => HandoverDoc(p),
             _ => Generic(req.AgentId),
         };
         var input = (req.System.Length + req.Messages.Sum(x => x.Text.Length)) / 4;
@@ -176,7 +194,7 @@ public class SimulatedLlm : ILlmClient
         sb.AppendLine("## Work breakdown\n| Work | Owner | Week |\n|---|---|---|\n| UX spec & architecture | UX, SA | 3 |\n| Database & API | DB, BE | 4-6 |\n| Screens | FE | 5-7 |\n| Test & fix | QA | 8-9 |\n| Release | DevOps | 10 |");
         sb.AppendLine($"## Staffing\n{be} backend and {fe} frontend developer instances, working in parallel per module.");
         sb.AppendLine("## Risks\n- Approval rules may change after UAT. Mitigation: rules kept in configuration.\n- SSO setup depends on customer IT.");
-        return sb + Handoff("done", $"{f.Count} modules; staffing {be} BE + {fe} FE.", new { modules = f, instances = new Dictionary<string, int> { ["backend_dev"] = be, ["frontend_dev"] = fe, ["qa"] = 1 } });
+        return sb + Handoff("done", $"{f.Count} modules; staffing {be} BE + {fe} FE.", new { modules = f.Select((x, i) => $"M{i + 1:00} {x}").ToList(), instances = new Dictionary<string, int> { ["backend_dev"] = be, ["frontend_dev"] = fe, ["qa"] = 1 } });
     }
 
     private static string Ux(Project p) =>
@@ -194,11 +212,40 @@ public class SimulatedLlm : ILlmClient
 
     private static string Frontend(string module, int round) =>
         $"# Frontend: {module}{(round > 1 ? $" (fix round {round})" : "")}\n```html\n<section class=\"page\">\n  <h1>{module}</h1>\n  <table id=\"grid\"></table>\n</section>\n```" +
-        Handoff("done", round > 1 ? $"{module}: UI defects fixed." : $"{module}: list, detail and form screens built.");
+        Handoff("done", round > 1 ? $"{module}: UI defects fixed." : $"{module}: list, detail and form screens built.",
+            new { modules = Mods(module, round > 1 ? "UI defects fixed and re-checked; done" : "list, detail and form screens built; done") });
 
     private static string Backend(string module, int round) =>
         $"# Backend: {module}{(round > 1 ? $" (fix round {round})" : "")}\n```csharp\n[HttpPost(\"approve\")]\npublic async Task<IActionResult> Approve(int id) {{\n    // BR-01, BR-04\n    var r = await _svc.ApproveAsync(id, User);\n    return Ok(r);\n}}\n```" +
-        Handoff("done", round > 1 ? $"{module}: defects fixed, tests green." : $"{module}: endpoints and rules implemented.");
+        Handoff("done", round > 1 ? $"{module}: defects fixed, tests green." : $"{module}: endpoints and rules implemented.",
+            new { modules = Mods(module, round > 1 ? "defects fixed, unit tests green; done" : "endpoints and business rules implemented; partial (waiting for QA)") });
+
+    private static string HandoverDoc(Project p)
+    {
+        var mods = p.Plan?.Modules ?? Features(p);
+        var sb = new StringBuilder($"# Project summary\n\n## Executive summary\n{p.Title} replaces the paper process with a web application. " +
+            $"All {mods.Count} modules were built and tested; the system is live and the support team runs it.\n\n" +
+            "## Objectives and scope\n| In scope | Out of scope |\n|---|---|\n| Requests, two-level approval, purchase orders, receiving, dashboard | SAP integration (phase 2) |\n\n" +
+            "## What was delivered\n");
+        foreach (var m in mods) sb.AppendLine($"- **{m}**: built, tested and accepted.");
+        sb.AppendLine("\n## Solution and architecture\nA web application (ASP.NET Core) with a SQL database. Users sign in with their Windows account. " +
+            "Approvers get an e-mail and an in-app notification when a request waits for them.\n\n" +
+            "## Quality and security\n- Acceptance tests: all passed in round 2 after 3 defects were fixed.\n- Security review: 2 findings (medium, low), both fixed before release.\n\n" +
+            "## How to run it\n1. Install the .NET 9 runtime on the server.\n2. Copy the release folder and set the connection string in `appsettings.json`.\n3. Start the service and open the site address in a browser.\n\n" +
+            "## Known limitations\n- Reports are refreshed every 15 minutes, not live.\n\n## Recommended next steps\n1. Connect SAP for purchase orders.\n2. Add a mobile view for approvers.\n\n" +
+            "## Support and warranty\nWarranty 90 days. Support hours Mon-Fri 08:00-17:00, response within 4 hours for high priority.\n\n" +
+            "# User handbook\n\n## Getting started\n1. Open the site address given by your IT team.\n2. Sign in with your Windows account; your role (requester, supervisor, manager, warehouse) is set by the administrator.\n\n" +
+            "## Requester: create a material request\n1. Click **New request**.\n2. Pick the items and quantities, add a reason.\n3. Click **Submit**. The request shows *Waiting for supervisor*.\n\n" +
+            "## Supervisor and manager: approve a request\n1. Open **Approvals**.\n2. Open a request, check the items, then click **Approve** or **Reject** (a reason is required to reject).\n\n" +
+            "## Warehouse: receive goods\n1. Open **Receiving**, select the purchase order.\n2. Enter the received quantities and click **Confirm**.\n\n" +
+            "## Troubleshooting and FAQ\n| Problem | What to do |\n|---|---|\n| I cannot sign in | Ask IT to add your Windows account to the application group. |\n| My request is stuck | Check the status line; the approver gets a reminder after 24 hours. |\n\n" +
+            "## Glossary\n- **PO**: purchase order.\n- **BR-xx**: business rule number from the requirements.");
+        return sb + Handoff("done", "Client handover: project summary and user handbook.");
+    }
+
+    /// {"M01": text, ...} for every module code in an assignment such as "M01 Request, M03 Report".
+    private static Dictionary<string, string> Mods(string module, string text) =>
+        Regex.Matches(module, @"\bM\d+\b").Select(m => m.Value).Distinct().ToDictionary(c => c, _ => text);
 
     private static string Database(Project p, int round) =>
         "# Database\n```sql\nCREATE TABLE Request (Id INT IDENTITY PRIMARY KEY, RequesterId NVARCHAR(50) NOT NULL, Status NVARCHAR(20) NOT NULL, CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME());\nCREATE INDEX IX_Request_Status ON Request(Status);\n```" +
@@ -210,7 +257,9 @@ public class SimulatedLlm : ILlmClient
         var defects = bugs > 0 ? new[] { "High: approver can approve own request (BR-04)", "Medium: reject without reason is accepted (BR-02)", "Low: report date filter ignores time zone" } : [];
         return $"# Test report, round {round}\n| Case | Result |\n|---|---|\n| UAT-01 Requester submits | Pass |\n| UAT-02 Approval level 1 | {(bugs > 0 ? "Fail" : "Pass")} |\n| UAT-03 Reject with reason | {(bugs > 0 ? "Fail" : "Pass")} |\n| UAT-04 Report | {(bugs > 0 ? "Fail" : "Pass")} |\n" +
                (bugs > 0 ? "## Defects\n" + string.Join("\n", defects.Select(d => "- " + d)) : "All acceptance criteria pass.") +
-               Handoff("done", bugs > 0 ? $"{bugs} defects found, back to Build." : "All tests pass. Ready to release.", new { bugs, defects });
+               Handoff("done", bugs > 0 ? $"{bugs} defects found, back to Build." : "All tests pass. Ready to release.", new { bugs, defects,
+                   modules = (p.Plan?.Modules ?? []).Select((m, i) => (Code: m.Split(' ')[0], Text: bugs > 0 && i == 0 ? "3 defects: own-request approval, reject without reason, report time zone; blocked" : "acceptance tests pass; done"))
+                       .ToDictionary(x => x.Code, x => x.Text) });
     }
 
     private static string Security() =>

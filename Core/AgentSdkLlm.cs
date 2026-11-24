@@ -18,7 +18,7 @@ public class AgentSdkLlm : ILlmClient, IDisposable
     public AgentSdkLlm(string runnerDir, int port = 5081)
     {
         _runnerDir = runnerDir;
-        _http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}"), Timeout = TimeSpan.FromMinutes(15) };
+        _http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}"), Timeout = TimeSpan.FromMinutes(60) };   // stuck calls are cut off by the runner's stall watchdog, not here
     }
 
     /// Starts the Node runner unless one is already answering on the port.
@@ -63,14 +63,80 @@ public class AgentSdkLlm : ILlmClient, IDisposable
 
     public async Task<LlmResult> CompleteAsync(LlmRequest req, Project project, CancellationToken ct)
     {
+        var jobId = $"{project.Id}:{req.AgentId}:{Guid.NewGuid():N}";
         var job = new { agentId = req.AgentId, model = req.Model, effort = req.Effort, maxOutputTokens = req.MaxTokens, system = req.System, prompt = Flatten(req.Messages),
-            tools = req.Tools, cwd = req.Cwd, maxTurns = req.MaxTurns, maxBudgetUsd = req.MaxBudgetUsd };
-        var res = await _http.PostAsJsonAsync("/run", job, ct);
-        var body = await res.Content.ReadFromJsonAsync<RunnerResult>(cancellationToken: ct)
-                   ?? throw new InvalidOperationException("Empty answer from the agent runner.");
-        if (!body.Ok) throw new InvalidOperationException($"Agent SDK error: {body.Error}");
-        return new LlmResult(body.Text ?? "", body.InputTokens, body.OutputTokens, body.StopReason ?? "end_turn", body.CostUsd);
+            tools = req.Tools, cwd = req.Cwd, maxTurns = req.MaxTurns, maxBudgetUsd = req.MaxBudgetUsd, jobId, allowedHosts = req.AllowedHosts ?? [] };
+
+        // While the runner works, ask it every 2 s what the agent is doing and pass that on.
+        using var pollCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var poll = req.OnProgress == null ? Task.CompletedTask : PollAsync(jobId, req.OnProgress, pollCts.Token);
+        try
+        {
+            var res = await _http.PostAsJsonAsync("/run", job, ct);
+            var body = await res.Content.ReadFromJsonAsync<RunnerResult>(cancellationToken: ct)
+                       ?? throw new InvalidOperationException("Empty answer from the agent runner.");
+            if (!body.Ok) throw new InvalidOperationException(body.Code == "rate_limit" ? body.Error : $"Agent SDK error: {body.Error}");
+            return new LlmResult(body.Text ?? "", body.InputTokens, body.OutputTokens, body.StopReason ?? "end_turn", body.CostUsd, body.CacheReadTokens);
+        }
+        finally
+        {
+            pollCts.Cancel();
+            try { await poll; } catch (OperationCanceledException) { }
+        }
     }
+
+    /// Opens `url` in a headless browser (through the runner) and returns what it saw, as text for QA.
+    /// Screenshots are written to `outDir` (inside the app folder, so QA can Read them).
+    public async Task<string?> BrowseAsync(string url, string outDir, CancellationToken ct)
+    {
+        try
+        {
+            var res = await _http.PostAsJsonAsync("/browse", new { url, outDir }, ct);
+            var r = await res.Content.ReadFromJsonAsync<BrowseResult>(cancellationToken: ct);
+            if (r == null) return null;
+            if (!r.Ok) return $"BROWSER CHECK: could not run ({r.Error}).";
+            var sb = new StringBuilder($"BROWSER CHECK (real headless browser, 1280x800, on {url}):\n");
+            sb.AppendLine($"- Title: {r.Title}; canvas: {(r.Canvas.Count == 0 ? "none" : string.Join(", ", r.Canvas))}; WebGL: {r.Webgl}; frame rate: about {r.Fps} fps");
+            sb.AppendLine($"- Visible text: {r.Text}");
+            sb.AppendLine(r.Exceptions.Count == 0 ? "- Uncaught JavaScript errors: none" : "- Uncaught JavaScript errors:\n  - " + string.Join("\n  - ", r.Exceptions));
+            sb.AppendLine(r.Console.Count == 0 ? "- Console errors/warnings: none" : "- Console errors/warnings:\n  - " + string.Join("\n  - ", r.Console));
+            sb.AppendLine(r.Failed.Count == 0 ? "- Failed requests: none" : "- Failed requests (missing files or broken calls):\n  - " + string.Join("\n  - ", r.Failed));
+            sb.AppendLine("- Screenshots (Read them): .qa/screen-1-loaded.png (after load), .qa/screen-2-after-input.png (after a click in the middle, Enter and Space)");
+            return sb.ToString();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException or TaskCanceledException && !ct.IsCancellationRequested)
+        {
+            return $"BROWSER CHECK: could not run ({ex.Message}).";
+        }
+    }
+
+    private record BrowseResult(bool Ok, string? Error, string? Title, List<string> Console, List<string> Exceptions, List<string> Failed,
+        List<string> Canvas, string? Webgl, int? Fps, string? Text);
+
+    private async Task PollAsync(string jobId, Action<AgentProgress> onProgress, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            await Task.Delay(2000, ct);
+            try
+            {
+                var r = await _http.GetAsync("/progress/" + Uri.EscapeDataString(jobId), ct);
+                if (!r.IsSuccessStatusCode) continue;   // not registered yet, or just finished
+                var s = await r.Content.ReadFromJsonAsync<RunnerProgress>(cancellationToken: ct);
+                if (s == null) continue;
+                onProgress(new AgentProgress(s.Phase ?? "starting", s.Tool, s.Detail, s.OutTokens, s.Turns, s.ElapsedSec, s.IdleSec,
+                    s.Retry == null ? null : new RetryInfo(s.Retry.Attempt, s.Retry.Max, s.Retry.WaitMs, s.Retry.Error, s.Retry.Status),
+                    s.RateLimit == null ? null : new RateLimitInfo(s.RateLimit.Status, s.RateLimit.ResetsAt, s.RateLimit.Type, s.RateLimit.Utilization)));
+            }
+            catch (HttpRequestException) { /* runner busy or restarting: try again next tick */ }
+            catch (System.Text.Json.JsonException) { }
+        }
+    }
+
+    private record RunnerProgress(string? Phase, string? Tool, string? Detail, int OutTokens, int Turns, int ElapsedSec, int IdleSec,
+        RunnerRetry? Retry, RunnerRateLimit? RateLimit);
+    private record RunnerRetry(int Attempt, int Max, int WaitMs, string? Error, int? Status);
+    private record RunnerRateLimit(string? Status, long? ResetsAt, string? Type, double? Utilization);
 
     /// The SDK takes one prompt, so a multi-turn chat is passed as a transcript.
     private static string Flatten(List<(string Role, string Text)> messages)
@@ -89,5 +155,5 @@ public class AgentSdkLlm : ILlmClient, IDisposable
         _http.Dispose();
     }
 
-    private record RunnerResult(bool Ok, string? Text, string? Error, int InputTokens, int OutputTokens, decimal? CostUsd, string? StopReason);
+    private record RunnerResult(bool Ok, string? Text, string? Error, int InputTokens, int OutputTokens, decimal? CostUsd, string? StopReason, string? Code = null, long CacheReadTokens = 0);
 }

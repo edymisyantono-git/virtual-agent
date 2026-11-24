@@ -4,6 +4,8 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Agents build their own apps under data/ (and the runner's workspace); keep that code out of this build. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);data/**;agent-runner/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>

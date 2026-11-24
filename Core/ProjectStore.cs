@@ -25,7 +25,7 @@ public class ProjectStore
                 if (p == null) continue;
                 // A restart interrupts any running pipeline; mark it so the UI does not wait forever.
                 var dirty = false;
-                if (p.Status is ProjectStatus.Running or ProjectStatus.WaitingGate or ProjectStatus.WaitingCustomer)
+                if (p.Status is ProjectStatus.Running or ProjectStatus.WaitingGate or ProjectStatus.WaitingCustomer or ProjectStatus.Paused)
                 {
                     p.Status = ProjectStatus.Stopped;
                     p.PendingGate = null; p.PendingQuestion = null;
@@ -86,6 +86,17 @@ public class ProjectStore
     {
         var path = ArtifactPath(p, name);
         return File.Exists(path) ? File.ReadAllText(path) : null;
+    }
+
+    /// A live-only event (Seq 0): sent to whoever is watching now, never stored or replayed. Used for the
+    /// frequent progress ticks of working agents, so project.json does not fill up with them.
+    public void PublishLive(Project p, string type, object data)
+    {
+        var dict = JsonSerializer.Deserialize<Dictionary<string, object?>>(JsonSerializer.Serialize(data, AgentRegistry.Json), AgentRegistry.Json) ?? new();
+        var ev = new VcEvent { Type = type, Data = dict, Seq = 0 };
+        if (_listeners.TryGetValue(p.Id, out var list))
+            lock (list)
+                foreach (var ch in list) ch.Writer.TryWrite(ev);
     }
 
     public void Publish(Project p, string type, object data)

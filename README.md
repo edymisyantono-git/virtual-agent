@@ -77,6 +77,27 @@ halaman **Registry** di aplikasi (perubahan disimpan kembali ke file).
 - **Lebar panel kiri dan kanan** bisa diatur dengan menyeret garis pemisah (atau tombol panah
   saat pemisah fokus). Klik dua kali untuk kembali ke lebar default. Tersimpan per browser.
 
+## Lantai 3D
+
+Tombol **2D | 3D** di pojok kanan atas lantai operasi. Tampilan 3D (Three.js r170, lisensi MIT, disimpan
+lokal di `wwwroot/vendor/three`, jadi jalan offline) mencerminkan lantai 2D: agent yang bekerja naik,
+bersinar neon dan mendapat berkas cahaya dari CEO; seret untuk memutar, scroll untuk zoom, seret kanan
+untuk menggeser, klik kristal untuk pengaturan agent, ⟲ untuk kembali ke sudut awal.
+
+## Menyerahkan ke klien
+
+Tab Dokumen, kartu **Paket rilis untuk klien**: build rilis aplikasi + runtime .NET pribadi (disalin dari
+PC ini, tanpa unduhan) + `Start.bat`/`Mulai.bat` + README + PDF serah terima, dalam satu zip
+(`data/projects/<id>/release/`). Klien mengekstrak lalu klik dua kali; tidak perlu instal apa pun.
+
+## Bahasa (Indonesia / English)
+
+Pilihan **EN / ID** di topbar adalah satu pengaturan untuk seluruh aplikasi (`defaults.language` di
+agents.json): bahasa UI, pesan dari tim (chat, aktivitas, label gate), dan bahasa dokumen serta
+pertanyaan yang ditulis agent. Nama posisi, departemen, tahap, dan gate dalam bahasa Indonesia ada di
+field `names` (contoh `"names": { "id": "Analis Bisnis" }`); tanpa field itu nama Inggris yang tampil.
+Teks UI ada di `wwwroot/i18n.js`. Isi mode simulasi tetap berbahasa Inggris.
+
 ## Agent membagi tugasnya sendiri
 
 Setiap peran dengan **Max agents** 2 atau lebih (panel agent atau kolom *Max agents* di Registry,
@@ -86,6 +107,12 @@ Setiap peran dengan **Max agents** 2 atau lebih (panel agent atau kolom *Max age
 2. Orkestrator menyalakan helper dengan **peran dan model yang sama**, maksimal Max agents dikurangi 1,
    dan mereka bekerja paralel. Kartu agent menampilkan badge ×N dan satu titik per agent.
 3. Lead menggabungkan bagian-bagiannya menjadi satu dokumen final.
+
+Setiap agent tambahan mendapat kotaknya sendiri di lantai. Kotak milik agent yang ditugaskan PM, milik
+lead, atau milik helper yang masih bekerja tidak pernah dipakai bersama; helper baru mengambil nomor
+kosong berikutnya (kotak baru), dan kotak helper yang sudah selesai boleh dipakai ulang. Karena itu
+setiap agent dari peran yang sudah berjumlah lebih dari satu (misalnya Backend ×3 dari PM) juga boleh
+memanggil helper, kecuali di mode kode (agent yang menulis file tidak membagi tugas).
 
 Bagian dari helper tersimpan sebagai dokumen *part*, tetapi tidak dikirim ke peran lain. Tim
 berikutnya hanya membaca dokumen gabungan. Prompt meminta agent membagi tugas hanya bila
@@ -131,7 +158,11 @@ Setiap agent menulis dokumen Markdown dan menutupnya dengan blok handoff:
 ```
 
 `need_info` + `canAskCustomer` → pertanyaan muncul di chat customer dan agent diulang dengan
-jawabannya. `data` dipakai PM (`modules`, `instances`) dan QA (`bugs`, `defects`).
+jawabannya. Semua agent (kecuali Intake, yang memang mengobrol langsung) boleh bertanya. Prompt-nya
+meminta agent bertanya, bukan menebak, untuk hal yang hanya diketahui customer, maksimal 5 pertanyaan
+per putaran dan 3 putaran per tugas. Agent yang bekerja paralel bertanya bergantian. Setiap jawaban
+disimpan di proyek (`customerAnswers`) dan dibaca semua agent berikutnya, jadi pertanyaan yang sama
+tidak diulang. `data` dipakai PM (`modules`, `instances`) dan QA (`bugs`, `defects`).
 Dokumen tersimpan di `data/projects/<id>/artifacts/`.
 
 ## Kontrol biaya

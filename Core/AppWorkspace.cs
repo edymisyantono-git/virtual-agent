@@ -60,8 +60,10 @@ public class AppWorkspace : IDisposable
     public async Task<(bool Ok, string Output)> BuildAsync(Project p, CancellationToken ct)
     {
         if (!Exists(p)) return (false, "There is no App.csproj in the app folder yet.");
-        // A running copy locks the DLLs; stop it before building.
+        // A running copy locks the DLLs; stop it (and the QA copy) before building.
         Stop(p);
+        StopTest(p);
+        KillOrphans(p);
         return await RunAsync(Dotnet, "build -nologo -v q -clp:ErrorsOnly", Dir(p), TimeSpan.FromMinutes(5), ct);
     }
 
@@ -71,9 +73,58 @@ public class AppWorkspace : IDisposable
     public async Task<string> StartAsync(Project p, int preferredPort, CancellationToken ct)
     {
         Stop(p);
+        StopTest(p);   // both copies run from the same bin folder
         var build = await BuildAsync(p, ct);
         if (!build.Ok) throw new InvalidOperationException("The app does not build:\n" + Tail(build.Output, 25));
-        var port = FreePort(preferredPort);
+        var url = await LaunchAsync(p, FreePort(preferredPort), _running, ct);
+        p.AppUrl = url;
+        return url;
+    }
+
+    // ---------- test copy for QA: started and stopped by the orchestrator, never by the agent ----------
+    private readonly ConcurrentDictionary<string, Process> _testing = new();
+
+    /// Fresh build, then the app on a free port from basePort up (so two projects in QA never share one),
+    /// after killing any copy an agent left running from this project's folder.
+    public async Task<string> StartTestAsync(Project p, int basePort, CancellationToken ct)
+    {
+        StopTest(p);
+        KillOrphans(p);
+        var build = await BuildAsync(p, ct);
+        if (!build.Ok) throw new InvalidOperationException("The app does not build:\n" + Tail(build.Output, 25));
+        return await LaunchAsync(p, FreePort(basePort), _testing, ct);
+    }
+
+    public void StopTest(Project p)
+    {
+        if (_testing.TryRemove(p.Id, out var proc))
+            try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+    }
+
+    /// App.exe processes started from this project's folder that nobody tracks (e.g. an agent ran `dotnet run &`
+    /// and `kill $PID` only stopped the dotnet wrapper). They hold the port and lock the DLLs.
+    public int KillOrphans(Project p)
+    {
+        var dir = Path.GetFullPath(Dir(p)).TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
+        var tracked = new HashSet<int>(_running.Values.Concat(_testing.Values).Where(x => !x.HasExited).Select(x => x.Id));
+        var killed = 0;
+        foreach (var proc in Process.GetProcessesByName("App"))
+        {
+            try
+            {
+                var file = proc.MainModule?.FileName;
+                if (file == null || tracked.Contains(proc.Id) || !file.StartsWith(dir, StringComparison.OrdinalIgnoreCase)) continue;
+                proc.Kill(entireProcessTree: true); killed++;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+            finally { proc.Dispose(); }
+        }
+        if (killed > 0) _log.LogInformation("Stopped {Count} leftover app process(es) for {Project}", killed, p.Id);
+        return killed;
+    }
+
+    private async Task<string> LaunchAsync(Project p, int port, ConcurrentDictionary<string, Process> registry, CancellationToken ct)
+    {
         var url = $"http://localhost:{port}";
         var psi = new ProcessStartInfo(Dotnet, $"run --no-build --urls {url}")
         {
@@ -86,19 +137,19 @@ public class AppWorkspace : IDisposable
         proc.OutputDataReceived += (_, e) => { if (e.Data != null) lock (log) log.AppendLine(e.Data); };
         proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (log) log.AppendLine(e.Data); };
         proc.BeginOutputReadLine(); proc.BeginErrorReadLine();
-        _running[p.Id] = proc;
+        registry[p.Id] = proc;
 
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-        for (var i = 0; i < 40; i++)
+        for (var i = 0; i < 60; i++)
         {
             await Task.Delay(500, ct);
-            if (proc.HasExited) throw new InvalidOperationException("The app stopped right after starting:\n" + Tail(log.ToString(), 25));
-            try { await http.GetAsync(url, ct); p.AppUrl = url; return url; }
+            if (proc.HasExited) { registry.TryRemove(p.Id, out _); throw new InvalidOperationException("The app stopped right after starting:\n" + Tail(log.ToString(), 25)); }
+            try { await http.GetAsync(url, ct); return url; }
             catch (HttpRequestException) { }
             catch (TaskCanceledException) when (!ct.IsCancellationRequested) { }
         }
-        Stop(p);
-        throw new InvalidOperationException("The app did not answer within 20 seconds:\n" + Tail(log.ToString(), 25));
+        if (registry.TryRemove(p.Id, out var dead)) try { dead.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+        throw new InvalidOperationException("The app did not answer within 30 seconds:\n" + Tail(log.ToString(), 25));
     }
 
     public void Stop(Project p)
@@ -150,7 +201,7 @@ public class AppWorkspace : IDisposable
 
     public void Dispose()
     {
-        foreach (var proc in _running.Values)
+        foreach (var proc in _running.Values.Concat(_testing.Values))
             try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
     }
 }
