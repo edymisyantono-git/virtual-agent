@@ -124,7 +124,8 @@ select.field, input.field, textarea.field { border: 1px solid var(--line); backg
 .ribbon .st.done { color: var(--ink); } .ribbon .st.done::after { width: 100%; background: var(--ok); }
 .ribbon .st.skipped { text-decoration: line-through; opacity: .55; }
 table.reg tr.off td:not(:first-child) { opacity: .45; }
-.ad-active { align-items: flex-start; color: var(--ink); white-space: normal; gap: 8px; }
+.agentdlg .form label.ad-active { display: flex; align-items: flex-start; color: var(--ink); white-space: normal; gap: 8px; }
+.agentdlg .form label.ad-active input { margin-top: 3px; }
 .ad-active small { display: block; color: var(--muted); font-size: 11px; }
 .node.off { opacity: .5; }
 .node.off .card { stroke-dasharray: 4 3; fill: var(--surface-2); }

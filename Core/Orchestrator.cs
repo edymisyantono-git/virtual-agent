@@ -319,12 +319,8 @@ public class Orchestrator
     {
         await EnforceBudgetAsync(p, st, ct);
 
-        var system = $"You are the {def.Role} at {_reg.Config.Company}, a full-stack digital company staffed by AI agents. {def.Persona}\n\n" +
-                     "Work only from the brief and the prior work you are given; state assumptions instead of inventing customer facts.\n" +
-                     "Write your deliverable in English as a Markdown document. End your reply with one fenced json block:\n" +
-                     "```json\n{\"status\": \"done | need_info | blocked\", \"summary\": \"<one sentence for the team>\", \"open_questions\": [], \"data\": {}}\n```\n" +
-                     $"LENGTH: stay under about {TargetWords(def):N0} words in total. Be dense: tables and short bullets, no repetition, no restating the brief or other teams' documents. " +
-                     "For code, give the key files and the non-obvious logic only, not boilerplate. The final json block is mandatory, so leave room for it.";
+        var canDelegate = CanDelegate(p, def);
+        var system = BuildSystem(def, canDelegate);
         var msg = BuildContext(p, st, def, inst, module, round, note, answers);
 
         _store.Publish(p, "agent", new { agentId = def.Id, instance = inst, stageId = st.Id, status = "working", module, round,
@@ -354,6 +350,16 @@ public class Orchestrator
             return await RunAgentAsync(p, st, def, inst, module, round, note, ct, qa);
         }
 
+        if (handoff.Status == "delegate" && canDelegate)
+        {
+            Record(p, def, st.Id, inst, model, result, "delegate", handoff.Summary, sw.ElapsedMilliseconds);
+            (result, model, handoff) = await DelegateAsync(p, st, def, inst, module, round, note, answers, handoff, msg, ct);
+        }
+        else if (handoff.Status == "delegate")
+        {
+            handoff.Status = "done";   // not allowed to delegate here; keep whatever it wrote
+        }
+
         var name = $"{st.Id}-{def.Id}{(inst > 1 ? $"-{inst}" : "")}{(round > 1 ? $"-r{round}" : "")}.md";
         var title = def.Role + (module != null ? $" · {module}" : "") + (round > 1 ? $" (round {round})" : "");
         var art = new ArtifactRef { Name = name, Title = title, AgentId = def.Id, StageId = st.Id, Round = round, Instance = inst };
@@ -378,6 +384,105 @@ public class Orchestrator
         return new StageResult(def, inst, handoff);
     }
 
+    // ================= Delegation: a role splits its own task across helpers of the same role and model =================
+
+    /// A role may split its task when it is allowed more than one agent and is not already one of several
+    /// parallel instances staffed by the Project Manager.
+    private bool CanDelegate(Project p, AgentDef def)
+    {
+        if (def.MaxInstances < 2) return false;
+        var staffed = def.Spawnable && p.Plan?.Instances.TryGetValue(def.Id, out var n) == true ? Math.Clamp(n, 1, def.MaxInstances) : 1;
+        return staffed == 1;
+    }
+
+    private string BuildSystem(AgentDef def, bool canDelegate, string? extra = null)
+    {
+        var sb = new StringBuilder();
+        sb.Append($"You are the {def.Role} at {_reg.Config.Company}, a full-stack digital company staffed by AI agents. {def.Persona}\n\n");
+        sb.Append("Work only from the brief and the prior work you are given; state assumptions instead of inventing customer facts.\n");
+        sb.Append("Write your deliverable in English as a Markdown document. End your reply with one fenced json block:\n");
+        sb.Append("```json\n{\"status\": \"done | need_info | blocked\", \"summary\": \"<one sentence for the team>\", \"open_questions\": [], \"data\": {}}\n```\n");
+        sb.Append($"LENGTH: stay under about {TargetWords(def):N0} words in total. Be dense: tables and short bullets, no repetition, no restating the brief or other teams' documents. ");
+        sb.Append("For code, give the key files and the non-obvious logic only, not boilerplate. The final json block is mandatory, so leave room for it.");
+        if (canDelegate)
+            sb.Append($"\n\nSPLITTING WORK: if this task is clearly too large to do well in one reply, you may hand parts to up to {def.MaxInstances - 1} helpers " +
+                      "who have your role and your model. Then reply with ONLY the json block: " +
+                      "{\"status\": \"delegate\", \"summary\": \"<why>\", \"data\": {\"subtasks\": [{\"title\": \"...\", \"instructions\": \"...\"}]}} " +
+                      "with 2 or more subtasks that do not overlap. Each helper writes one part; afterwards you merge the parts into the final document. " +
+                      "Splitting costs more, so do the task yourself unless it is genuinely big.");
+        if (extra != null) sb.Append("\n\n" + extra);
+        return sb.ToString();
+    }
+
+    private async Task<(LlmResult, ResolvedModel, Handoff)> DelegateAsync(Project p, StageDef st, AgentDef def, int inst, string? module, int round,
+        string? note, string? answers, Handoff plan, string leadContext, CancellationToken ct)
+    {
+        var subtasks = (plan.Data?["subtasks"]?.AsArray() ?? [])
+            .Select(x => (Title: x?["title"]?.ToString() ?? "", Instructions: x?["instructions"]?.ToString() ?? ""))
+            .Where(s => s.Title.Length > 0)
+            .Take(def.MaxInstances - 1)
+            .ToList();
+
+        string mergeNote;
+        if (subtasks.Count < 2)
+        {
+            mergeNote = "Splitting was not possible (fewer than two usable subtasks). Do the whole task yourself now.";
+        }
+        else
+        {
+            var count = subtasks.Count + 1;
+            _store.Publish(p, "spawn", new { agentId = def.Id, stageId = st.Id, count, reason = "delegate", summary = plan.Summary,
+                modules = new[] { "lead: plans and merges" }.Concat(subtasks.Select(s => s.Title)).ToList() });
+
+            var parts = await Task.WhenAll(subtasks.Select((s, k) =>
+                RunHelperAsync(p, st, def, inst + k + 1, k + 1, subtasks.Count, s.Title, s.Instructions, module, round, note, answers, ct)));
+
+            var sbParts = new StringBuilder("PARTS FROM YOUR HELPERS. Merge them into ONE final deliverable: remove overlaps, fill gaps, keep one consistent numbering, and end with the json block.\n");
+            for (var k = 0; k < parts.Length; k++)
+                sbParts.AppendLine($"\n===== Part {k + 1}: {subtasks[k].Title} =====\n{parts[k]}");
+            mergeNote = sbParts.ToString();
+        }
+
+        await EnforceBudgetAsync(p, st, ct);
+        _store.Publish(p, "agent", new { agentId = def.Id, instance = inst, stageId = st.Id, status = "working", module = "merging the parts", round });
+        var (result, model) = await CallAsync(p, def, st.Id, BuildSystem(def, canDelegate: false), [("user", leadContext + "\n\n" + mergeNote)], ct);
+        var handoff = ParseHandoff(result.Text);
+        if (handoff.Status == "delegate") handoff.Status = "done";
+        return (result, model, handoff);
+    }
+
+    private async Task<string> RunHelperAsync(Project p, StageDef st, AgentDef def, int inst, int part, int of, string title, string instructions,
+        string? module, int round, string? note, string? answers, CancellationToken ct)
+    {
+        await EnforceBudgetAsync(p, st, ct);
+        _store.Publish(p, "agent", new { agentId = def.Id, instance = inst, stageId = st.Id, status = "working", module = title, round,
+            model = _reg.ResolveModel(def.Id, p.ModelOverrides).Model, source = _reg.ResolveModel(def.Id, p.ModelOverrides).Source });
+
+        var system = BuildSystem(def, canDelegate: false,
+            $"You are helper {part} of {of} for the lead {def.Role}. Write ONLY your assigned part, as a section the lead will merge. Do not delegate.");
+        var msg = BuildContext(p, st, def, 1, module, round, note, answers) + $"\n\nYOUR SUBTASK ({part} of {of}): {title}\n{instructions}";
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        LlmResult result; ResolvedModel model;
+        try { (result, model) = await CallAsync(p, def, st.Id, system, [("user", msg)], ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _store.Publish(p, "agent", new { agentId = def.Id, instance = inst, stageId = st.Id, status = "error", summary = ex.Message });
+            throw;
+        }
+
+        var name = $"{st.Id}-{def.Id}{(round > 1 ? $"-r{round}" : "")}-part{part}.md";
+        var art = new ArtifactRef { Name = name, Title = $"{def.Role} · part {part}: {title}", AgentId = def.Id, StageId = st.Id, Round = round, Instance = inst, Helper = true };
+        _store.WriteArtifact(p, art, result.Text);
+        _store.Publish(p, "artifact", art);
+
+        var h = ParseHandoff(result.Text);
+        Record(p, def, st.Id, inst, model, result, "done", h.Summary, sw.ElapsedMilliseconds);
+        var last = p.Runs.Last(r => r.AgentId == def.Id && r.Instance == inst);
+        _store.Publish(p, "agent", new { agentId = def.Id, instance = inst, stageId = st.Id, status = "done", summary = $"Part {part}: {h.Summary}",
+            model = model.Model, source = model.Source, tokensIn = last.TokensIn, tokensOut = last.TokensOut, cost = last.Cost, artifact = name });
+        return result.Text;
+    }
+
     private int OutputLimit(AgentDef def) => def.MaxOutputTokens is > 0 ? def.MaxOutputTokens.Value : _reg.Config.Defaults.MaxOutputTokens;
 
     /// Soft length target, far below the hard cap: thinking tokens count against the cap (a 300-word reply
@@ -393,6 +498,7 @@ public class Orchestrator
         List<ArtifactRef> all;
         lock (p) all = p.Artifacts.ToList();
         return all
+            .Where(a => !a.Helper)
             .Where(a => a.AgentId == def.Id
                 ? round > 1 && a.Instance == inst
                 : def.Reads == null || def.Reads.Contains(a.AgentId))
@@ -580,7 +686,7 @@ public class Orchestrator
             var o = JsonNode.Parse(matches[^1].Groups[1].Value)!.AsObject();
             return new Handoff
             {
-                Status = o["status"]?.GetValue<string>() is { } s && s is "done" or "need_info" or "blocked" ? s : "done",
+                Status = o["status"]?.GetValue<string>() is { } s && s is "done" or "need_info" or "blocked" or "delegate" ? s : "done",
                 Summary = o["summary"]?.GetValue<string>() ?? FirstLine(text),
                 OpenQuestions = o["open_questions"]?.AsArray().Select(x => x?.ToString() ?? "").Where(x => x.Length > 0).ToList() ?? new(),
                 Data = o["data"] as JsonObject,

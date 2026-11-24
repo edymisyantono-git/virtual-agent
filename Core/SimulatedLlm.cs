@@ -17,6 +17,23 @@ public class SimulatedLlm : ILlmClient
         var round = Regex.Match(req.Messages.Last().Text, @"ROUND (\d+)") is { Success: true } m ? int.Parse(m.Groups[1].Value) : 1;
         var module = Regex.Match(req.Messages.Last().Text, @"ASSIGNED MODULE: (.+)") is { Success: true } mm ? mm.Groups[1].Value.Trim() : null;
         var answered = req.Messages.Last().Text.Contains("CUSTOMER ANSWERS");
+        var last = req.Messages.Last().Text;
+
+        // Delegation demo: a role allowed to split does so once its questions are answered; helpers write parts; the lead merges.
+        var part = Regex.Match(last, @"YOUR SUBTASK \((\d+) of (\d+)\): (.+)");
+        if (part.Success)
+            return Done(req, $"## Part {part.Groups[1].Value}: {part.Groups[3].Value.Trim()}\n- Draft section prepared by a helper.\n- Covers the items listed in the subtask." +
+                             Handoff("done", $"Wrote part {part.Groups[1].Value} of {part.Groups[2].Value}."));
+        var merging = last.Contains("PARTS FROM YOUR HELPERS");
+        if (req.AgentId == "business_analyst" && answered && !merging && req.System.Contains("SPLITTING WORK"))
+            return Done(req, Handoff("delegate", "The BRD covers many processes; splitting it into two parts.", new
+            {
+                subtasks = new[]
+                {
+                    new { title = "Process and business rules", instructions = "As-is and to-be process, business rules BR-xx." },
+                    new { title = "User stories and acceptance criteria", instructions = "One story per feature with Given/When/Then." },
+                },
+            }));
 
         var text = req.AgentId switch
         {
@@ -41,6 +58,9 @@ public class SimulatedLlm : ILlmClient
         var input = (req.System.Length + req.Messages.Sum(x => x.Text.Length)) / 4;
         return new LlmResult(text, input, text.Length / 4 + Random.Shared.Next(200, 900), "end_turn");
     }
+
+    private static LlmResult Done(LlmRequest req, string text) =>
+        new(text, (req.System.Length + req.Messages.Sum(x => x.Text.Length)) / 4, text.Length / 4 + Random.Shared.Next(100, 400), "end_turn");
 
     // ---------- intake ----------
 

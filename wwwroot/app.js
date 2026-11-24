@@ -97,7 +97,7 @@
   <section class="panel">
     <header><div><div class="eyebrow">agents.json</div><h2>Positions & models</h2></div><span class="spacer"></span>
       <label class="check">Override every agent <select id="globalAll" class="field"></select></label></header>
-    <div class="tablewrap"><table class="reg"><thead><tr><th>Active</th><th>Agent</th><th>Department</th><th>Stage</th><th>Default model</th><th>Global override</th><th>Effort</th><th>Max inst.</th><th>Uses now</th></tr></thead><tbody id="regBody"></tbody></table></div>
+    <div class="tablewrap"><table class="reg"><thead><tr><th>Active</th><th>Agent</th><th>Department</th><th>Stage</th><th>Default model</th><th>Global override</th><th>Effort</th><th title="Lead plus helpers when the role splits its work, or parallel instances staffed by the PM">Max agents</th><th>Uses now</th></tr></thead><tbody id="regBody"></tbody></table></div>
   </section>
   <div style="display:grid;gap:14px">
     <section class="panel">
@@ -138,6 +138,7 @@
     <label>Default model for all projects <small>saved to agents.json</small><select class="field" id="adModel"></select></label>
     <label>Override for this project only<select class="field" id="adOverride"></select></label>
     <label>Effort<select class="field" id="adEffort"><option value="">Company default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="max">Max</option></select></label>
+    <label>Max agents for this role <small>1 = works alone. 2 or more = may split a big task across helpers with the same role and model, then merges</small><input class="field mono" type="number" id="adMaxAgents" min="1" max="10" step="1"></label>
     <label>Max output tokens per reply <small>hard cap, thinking included. Lower = cheaper</small><input class="field mono" type="number" id="adMaxOut" min="500" max="64000" step="500"></label>
     <p class="note">Which one runs: project override, then global override (Registry), then this default, then the department, then the company default.</p>
     <div class="row"><button class="btn primary" type="submit" id="adSave">Save</button><button class="btn" type="button" id="adOpenReg">Open Registry</button></div>
@@ -276,7 +277,7 @@
       <td><select class="field" data-agent="${a.id}" data-field="model" ${dis}>${opt(a.model, "Department / default")}</select></td>
       <td><select class="field" data-agent="${a.id}" data-field="override" ${dis}>${opt(m.overrides[a.id], "None")}</select></td>
       <td><select class="field" data-agent="${a.id}" data-field="effort" ${dis}>${["", "low", "medium", "high", "max"].map(e => `<option value="${e}" ${(a.effort || "") === e ? "selected" : ""}>${e || "default"}</option>`).join("")}</select></td>
-      <td><input class="field mono" style="width:56px" type="number" min="1" value="${a.maxInstances}" data-agent="${a.id}" data-field="maxInstances" ${a.spawnable ? "" : "disabled"} ${dis}></td>
+      <td><input class="field mono" style="width:56px" type="number" min="1" value="${a.maxInstances}" data-agent="${a.id}" data-field="maxInstances" ${a.id === "intake" ? "disabled" : ""} ${dis}></td>
       <td>${a.disabled ? `<span class="src">off</span>` : `${chip(a.resolvedModel)} <span class="src">${esc(a.modelSource)}</span>`}</td></tr>`).join("");
     $("#nDept").innerHTML = Object.entries(m.departments).map(([k, d]) => `<option value="${k}">${esc(d.name)}</option>`).join("");
     $("#nModel").innerHTML = opt("", "Department / default");
@@ -342,7 +343,11 @@
         if (d.status === "error") feed("loop", d.agentId, `${a?.role} failed: ${d.summary}`, null, ts);
         activeCount(); break;
       }
-      case "spawn": viz.spawn(d.agentId, d.count); feed("info", "project_manager", `Staffed ${d.count} \u00d7 ${agent(d.agentId)?.role} in parallel`, (d.modules || []).filter(Boolean).join(" | "), ts); break;
+      case "spawn":
+        viz.spawn(d.agentId, d.count);
+        if (d.reason === "delegate") feed("info", d.agentId, `${agent(d.agentId)?.role} split its work across ${d.count - 1} helpers (same role and model)${d.summary ? `: ${d.summary}` : ""}`, (d.modules || []).slice(1).join(" | "), ts);
+        else feed("info", "project_manager", `Staffed ${d.count} \u00d7 ${agent(d.agentId)?.role} in parallel`, (d.modules || []).filter(Boolean).join(" | "), ts);
+        break;
       case "plan": feed("info", "project_manager", `Plan: ${(d.modules || []).length} modules`, (d.modules || []).join(", "), ts); break;
       case "handoff": viz.handoff(d.fromStage, d.toStage); break;
       case "artifact": S.artifacts.push(d); renderDocs(); break;
@@ -475,6 +480,8 @@
     $("#adEffort").value = a.effort || "";
     $("#adMaxOut").value = a.maxOutputTokens || "";
     $("#adMaxOut").disabled = DEMO;
+    $("#adMaxAgents").value = a.maxInstances || 1;
+    $("#adMaxAgents").disabled = DEMO || id === "intake";
     $("#adActive").checked = !a.disabled;
     $("#adActive").disabled = DEMO || id === "intake";
     $("#adActive").closest("label").title = id === "intake" ? "Customer Intake starts every request, so it can't be switched off." : "";
@@ -491,8 +498,9 @@
     try {
       const model = $("#adModel").value, effort = $("#adEffort").value, disabled = !$("#adActive").checked;
       const maxOutputTokens = Number($("#adMaxOut").value) || a.maxOutputTokens;
-      if ((a.model || "") !== model || (a.effort || "") !== effort || !!a.disabled !== disabled || maxOutputTokens !== a.maxOutputTokens)
-        S.meta = await api.send("PUT", `/registry/agents/${id}`, { model, effort, disabled, maxOutputTokens });
+      const maxInstances = Math.min(10, Math.max(1, Number($("#adMaxAgents").value) || a.maxInstances || 1));
+      if ((a.model || "") !== model || (a.effort || "") !== effort || !!a.disabled !== disabled || maxOutputTokens !== a.maxOutputTokens || maxInstances !== a.maxInstances)
+        S.meta = await api.send("PUT", `/registry/agents/${id}`, { model, effort, disabled, maxOutputTokens, maxInstances });
       const ov = $("#adOverride").value || null;
       if (S.id && (S.overrides[id] || null) !== ov)
         S.overrides = await api.send("PUT", `/projects/${S.id}/overrides`, { ...S.overrides, [id]: ov });

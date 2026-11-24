@@ -53,17 +53,17 @@
   },
   "departments": {
     "support": {
-      "name": "Operations \u0026 Support",
+      "name": "Operations & Support",
       "model": "claude-haiku-5-5"
     },
     "business": {
-      "name": "Business \u0026 Strategy"
+      "name": "Business & Strategy"
     },
     "finance": {
-      "name": "Finance \u0026 Administration"
+      "name": "Finance & Administration"
     },
     "product": {
-      "name": "Product \u0026 Analysis",
+      "name": "Product & Analysis",
       "model": "claude-opus-5-5"
     },
     "design": {
@@ -73,13 +73,13 @@
       "name": "Engineering"
     },
     "infra": {
-      "name": "Infrastructure \u0026 Security"
+      "name": "Infrastructure & Security"
     },
     "marketing": {
-      "name": "Marketing \u0026 Growth"
+      "name": "Marketing & Growth"
     },
     "data": {
-      "name": "Data \u0026 Analytics"
+      "name": "Data & Analytics"
     }
   },
   "overrides": {},
@@ -95,7 +95,7 @@
       "canAskCustomer": false,
       "reads": [],
       "maxOutputTokens": 1500,
-      "greeting": "Hi, I\u0027m the intake assistant at Nusantara Digital Works. Tell me about the problem you want solved, and I\u0027ll make sure the right team picks it up.",
+      "greeting": "Hi, I'm the intake assistant at Nusantara Digital Works. Tell me about the problem you want solved, and I'll make sure the right team picks it up.",
       "persona": "You run the first conversation with a new customer. Find out, one question at a time: the business problem, who the users are and how many, the 3-5 core features, systems it must integrate with, and constraints (deadline, budget). Be warm and brief. Reply in the language the customer writes in.",
       "outputs": []
     },
@@ -104,7 +104,7 @@
       "role": "Business Development",
       "initials": "BD",
       "department": "business",
-      "maxInstances": 1,
+      "maxInstances": 2,
       "spawnable": false,
       "canAskCustomer": false,
       "reads": [],
@@ -119,7 +119,7 @@
       "role": "Business Analyst",
       "initials": "BA",
       "department": "product",
-      "maxInstances": 1,
+      "maxInstances": 3,
       "spawnable": false,
       "canAskCustomer": true,
       "reads": [
@@ -144,7 +144,7 @@
         "bizdev"
       ],
       "maxOutputTokens": 5000,
-      "persona": "You are the orchestrator. Break the approved requirements into modules, write a work breakdown with owners and week numbers, list risks, and decide how many developer instances to staff. Put the decision in the handoff data as {\u0022modules\u0022: [..], \u0022instances\u0022: {\u0022frontend_dev\u0022: n, \u0022backend_dev\u0022: n, \u0022qa\u0022: 1}}.",
+      "persona": "You are the orchestrator. Break the approved requirements into modules, write a work breakdown with owners and week numbers, list risks, and decide how many developer instances to staff. Put the decision in the handoff data as {\"modules\": [..], \"instances\": {\"frontend_dev\": n, \"backend_dev\": n, \"qa\": 1}}.",
       "outputs": [
         "plan"
       ]
@@ -154,7 +154,7 @@
       "role": "UI/UX Designer",
       "initials": "UX",
       "department": "design",
-      "maxInstances": 1,
+      "maxInstances": 2,
       "spawnable": false,
       "canAskCustomer": false,
       "reads": [
@@ -173,7 +173,7 @@
       "initials": "SA",
       "department": "engineering",
       "model": "claude-opus-5-5",
-      "maxInstances": 1,
+      "maxInstances": 2,
       "spawnable": false,
       "canAskCustomer": false,
       "reads": [
@@ -188,7 +188,7 @@
     },
     {
       "id": "finance_legal",
-      "role": "Finance \u0026 Legal",
+      "role": "Finance & Legal",
       "initials": "FL",
       "department": "finance",
       "model": "claude-haiku-5-5",
@@ -250,7 +250,7 @@
       "role": "Database Developer",
       "initials": "DB",
       "department": "engineering",
-      "maxInstances": 1,
+      "maxInstances": 2,
       "spawnable": false,
       "canAskCustomer": false,
       "reads": [
@@ -279,7 +279,7 @@
         "db_dev"
       ],
       "maxOutputTokens": 6000,
-      "persona": "You test the build against the acceptance criteria: write test cases (id, steps, expected), the UAT scenario for every role, run them against the code you were given, and report defects with severity. Put {\u0022bugs\u0022: n, \u0022defects\u0022: [\u0022...\u0022]} in the handoff data; n = 0 means ready to release.",
+      "persona": "You test the build against the acceptance criteria: write test cases (id, steps, expected), the UAT scenario for every role, run them against the code you were given, and report defects with severity. Put {\"bugs\": n, \"defects\": [\"...\"]} in the handoff data; n = 0 means ready to release.",
       "outputs": [
         "test-report"
       ]
@@ -290,7 +290,7 @@
       "initials": "SE",
       "department": "infra",
       "model": "claude-opus-5-5",
-      "maxInstances": 1,
+      "maxInstances": 2,
       "spawnable": false,
       "canAskCustomer": false,
       "reads": [
@@ -368,7 +368,7 @@
       "role": "Data Analyst",
       "initials": "DA",
       "department": "data",
-      "maxInstances": 1,
+      "maxInstances": 2,
       "spawnable": false,
       "canAskCustomer": false,
       "reads": [
@@ -401,7 +401,7 @@
       ],
       "gate": {
         "id": "proposal",
-        "label": "Approve proposal \u0026 quotation"
+        "label": "Approve proposal & quotation"
       }
     },
     {
@@ -426,7 +426,7 @@
     },
     {
       "id": "design",
-      "title": "Design \u0026 contract",
+      "title": "Design & contract",
       "kind": "agents",
       "agents": [
         "uiux",
@@ -478,7 +478,7 @@
     },
     {
       "id": "growth",
-      "title": "Launch \u0026 operate",
+      "title": "Launch & operate",
       "kind": "agents",
       "agents": [
         "marketing",

@@ -138,6 +138,9 @@ public class ArtifactRef
     public string StageId { get; set; } = "";
     public int Round { get; set; } = 1;
     public int Instance { get; set; } = 1;
+    /// A helper's part of a split task; the lead merges it, so other roles read only the merged document.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Helper { get; set; }
 }
 
 public class AgentRun

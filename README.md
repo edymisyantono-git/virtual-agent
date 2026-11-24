@@ -77,6 +77,22 @@ halaman **Registry** di aplikasi (perubahan disimpan kembali ke file).
 - **Lebar panel kiri dan kanan** bisa diatur dengan menyeret garis pemisah (atau tombol panah
   saat pemisah fokus). Klik dua kali untuk kembali ke lebar default. Tersimpan per browser.
 
+## Agent membagi tugasnya sendiri
+
+Setiap peran dengan **Max agents** 2 atau lebih (panel agent atau kolom *Max agents* di Registry,
+`maxInstances` di agents.json) boleh membagi tugas yang terlalu besar:
+
+1. Agent (lead) membalas `status: "delegate"` dengan daftar `subtasks`, bukan dokumen.
+2. Orkestrator menyalakan helper dengan **peran dan model yang sama**, maksimal Max agents dikurangi 1,
+   dan mereka bekerja paralel. Kartu agent menampilkan badge ×N dan satu titik per agent.
+3. Lead menggabungkan bagian-bagiannya menjadi satu dokumen final.
+
+Bagian dari helper tersimpan sebagai dokumen *part*, tetapi tidak dikirim ke peran lain. Tim
+berikutnya hanya membaca dokumen gabungan. Prompt meminta agent membagi tugas hanya bila
+pekerjaannya memang besar, karena membagi menambah biaya. Default saat ini: BA 3; BizDev, UX,
+Architect, Database, Security, dan Data 2; sisanya 1 (bekerja sendiri). Developer dan QA tetap bisa
+diperbanyak oleh PM; kalau PM hanya menugaskan satu, developer itu juga boleh membagi tugasnya.
+
 ## Berhenti dan melanjutkan
 
 Server yang dimatikan atau di-restart menghentikan pipeline yang sedang berjalan. Proyeknya tampil
