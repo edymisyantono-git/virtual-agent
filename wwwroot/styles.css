@@ -109,6 +109,8 @@ select.field, input.field, textarea.field { border: 1px solid var(--line); backg
 .status-chip[data-s="Running"] { color: var(--signal); border-color: currentColor; }
 .status-chip[data-s="WaitingGate"], .status-chip[data-s="WaitingCustomer"] { color: var(--gate); border-color: currentColor; animation: breathe 1.6s infinite; }
 .status-chip[data-s="Completed"] { color: var(--ok); border-color: currentColor; }
+.status-row { display: inline-flex; align-items: center; gap: 6px; }
+.btn.sm { padding: 3px 9px; font-size: 11.5px; }
 .status-chip[data-s="Failed"], .status-chip[data-s="Stopped"] { color: var(--danger); border-color: currentColor; }
 .viz-wrap { position: relative; flex: 1; min-height: 0; overflow: auto; background:
   radial-gradient(circle at 1px 1px, var(--grid) 1px, transparent 0) 0 0 / 18px 18px, var(--surface-2); }

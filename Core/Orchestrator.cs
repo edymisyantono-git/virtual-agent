@@ -66,7 +66,7 @@ public class Orchestrator
         }
         else
         {
-            AddChat(p, "agent", IsActive("support") ? "support" : "intake", "Thanks, I've added your note to the project. The team is working on it; you'll be asked here if we need anything.");
+            AddChat(p, "agent", IsActive("support") ? "support" : "intake", StatusReport(p));
         }
         _store.Save(p);
     }
@@ -119,14 +119,66 @@ public class Orchestrator
 
     // ================= Pipeline =================
 
-    private void StartPipeline(Project p)
+    private void StartPipeline(Project p, bool resume = false)
     {
         var rt = Rt(p);
-        _ = Task.Run(() => RunPipelineAsync(p, rt.Cts.Token));
+        _ = Task.Run(() => RunPipelineAsync(p, rt, resume));
     }
 
-    private async Task RunPipelineAsync(Project p, CancellationToken ct)
+    /// A stopped or failed project that already has its brief can continue from where it left off.
+    public bool CanResume(Project p) =>
+        p.Status is ProjectStatus.Stopped or ProjectStatus.Failed
+        && Slots.All(p.Brief.ContainsKey)
+        && p.StageStatus.ContainsKey("discovery");
+
+    public void Resume(Project p)
     {
+        lock (p)
+        {
+            if (!CanResume(p)) throw new InvalidOperationException("This project can't be resumed.");
+            p.Status = ProjectStatus.Running;   // claim it before the task starts, so a double click can't start two
+        }
+        if (_rt.TryRemove(p.Id, out var old)) old.Cts.Cancel();   // a fresh runtime: the old token is already cancelled
+        _store.Publish(p, "status", new { status = nameof(ProjectStatus.Running) });
+        _store.Publish(p, "log", new { level = "info", text = "Resumed. Finished stages and approved gates are skipped." });
+        StartPipeline(p, resume: true);
+    }
+
+    private bool GateApproved(Project p, StageDef st)
+    {
+        if (st.Gate == null) return true;
+        List<VcEvent> events;
+        lock (p) events = p.Events.ToList();
+        return events.Any(e => e.Type == "gate"
+            && e.Data.GetValueOrDefault("stageId")?.ToString() == st.Id
+            && e.Data.GetValueOrDefault("gateId")?.ToString() == st.Gate.Id
+            && e.Data.GetValueOrDefault("status")?.ToString() == "approved");
+    }
+
+    private string StatusReport(Project p)
+    {
+        var stages = _reg.Config.Pipeline;
+        string Done(string id) => p.StageStatus.GetValueOrDefault(id, "");
+        var finished = stages.Count(s => Done(s.Id) is "done" or "skipped");
+        var current = stages.FirstOrDefault(s => Done(s.Id) == "running") ?? stages.FirstOrDefault(s => Done(s.Id) is not ("done" or "skipped"));
+        var working = _reg.Config.Agents.Where(a => p.Runs.Count > 0 && current != null && current.Agents.Contains(a.Id) && !a.Disabled).Select(a => a.Role).ToList();
+        var sb = new StringBuilder($"{finished} of {stages.Count} stages are finished");
+        if (current != null && p.Status != ProjectStatus.Completed) sb.Append($". Now: {current.Title}{(working.Count > 0 ? $" ({string.Join(", ", working)})" : "")}");
+        sb.Append($". Cost so far: ${p.Cost:N2}. ");
+        sb.Append(p.Status switch
+        {
+            ProjectStatus.Running => "The team is working; nothing is needed from you right now.",
+            ProjectStatus.WaitingGate => $"It is waiting for an approval from the owner: {p.PendingGate?.Label}.",
+            ProjectStatus.Stopped or ProjectStatus.Failed => "The project is paused. Press Resume on the floor to continue.",
+            ProjectStatus.Completed => "The project is delivered.",
+            _ => "",
+        });
+        return sb.ToString().Trim();
+    }
+
+    private async Task RunPipelineAsync(Project p, Runtime rt, bool resume)
+    {
+        var ct = rt.Cts.Token;
         try
         {
             SetStatus(p, ProjectStatus.Running);
@@ -148,10 +200,19 @@ public class Orchestrator
                         _store.Publish(p, "log", new { level = "info", text = $"{st.Title} skipped: all its agents are switched off." });
                         continue;
                     }
-                    if (prev != null)
-                        _store.Publish(p, "handoff", new { fromStage = prev.Id, toStage = st.Id });
 
-                    var results = st.Loop != null ? await RunLoopStageAsync(p, st, ct) : await RunStageAsync(p, st, 1, null, ct);
+                    // Resuming: a stage that finished its work is not run again; if its gate was never approved, only the gate is asked.
+                    var workDone = resume && p.StageStatus.GetValueOrDefault(st.Id) == "done";
+                    if (workDone && GateApproved(p, st)) { prev = st; continue; }
+
+                    List<StageResult> results = new();
+                    if (!workDone)
+                    {
+                        if (prev != null)
+                            _store.Publish(p, "handoff", new { fromStage = prev.Id, toStage = st.Id });
+                        if (resume) lock (p) p.Artifacts.RemoveAll(a => a.StageId == st.Id);   // half-finished attempt: files are rewritten
+                        results = st.Loop != null ? await RunLoopStageAsync(p, st, ct) : await RunStageAsync(p, st, 1, null, ct);
+                    }
 
                     var blocked = results.Where(r => r.Handoff.Status == "blocked").ToList();
                     if (blocked.Count > 0)
@@ -180,13 +241,17 @@ public class Orchestrator
         }
         catch (OperationCanceledException)
         {
-            SetStatus(p, ProjectStatus.Stopped);
+            // A run that was replaced by Resume must not overwrite the new run's status.
+            if (ReferenceEquals(Rt(p), rt)) SetStatus(p, ProjectStatus.Stopped);
         }
         catch (Exception ex)
         {
             _log.LogError(ex, "Pipeline failed for {Project}", p.Id);
-            _store.Publish(p, "log", new { level = "error", text = ex.Message });
-            SetStatus(p, ProjectStatus.Failed);
+            if (ReferenceEquals(Rt(p), rt))
+            {
+                _store.Publish(p, "log", new { level = "error", text = ex.Message });
+                SetStatus(p, ProjectStatus.Failed);
+            }
         }
         finally
         {

@@ -24,8 +24,23 @@ public class ProjectStore
                 var p = JsonSerializer.Deserialize<Project>(File.ReadAllText(file), AgentRegistry.Json);
                 if (p == null) continue;
                 // A restart interrupts any running pipeline; mark it so the UI does not wait forever.
+                var dirty = false;
                 if (p.Status is ProjectStatus.Running or ProjectStatus.WaitingGate or ProjectStatus.WaitingCustomer)
+                {
                     p.Status = ProjectStatus.Stopped;
+                    p.PendingGate = null; p.PendingQuestion = null;
+                    p.Events.Add(new VcEvent { Seq = p.Events.Count + 1, Type = "log", Data = new() { ["level"] = "warn", ["text"] = "The server restarted while this project was running, so it was paused. Press Resume to continue." } });
+                    dirty = true;
+                }
+                // The screen rebuilds itself by replaying events, so the last status event must match the saved status.
+                // (Older files were saved as Stopped after a restart without such an event and showed "Running" forever.)
+                var lastStatus = p.Events.LastOrDefault(e => e.Type == "status")?.Data.GetValueOrDefault("status")?.ToString();
+                if (p.Events.Count > 0 && lastStatus != p.Status.ToString())
+                {
+                    p.Events.Add(new VcEvent { Seq = p.Events.Count + 1, Type = "status", Data = new() { ["status"] = p.Status.ToString() } });
+                    dirty = true;
+                }
+                if (dirty) File.WriteAllText(file, JsonSerializer.Serialize(p, AgentRegistry.Json));
                 _projects[p.Id] = p;
             }
             catch (JsonException) { /* skip unreadable project files */ }

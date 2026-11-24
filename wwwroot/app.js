@@ -69,7 +69,7 @@
   <section class="panel stage" aria-label="Operations floor">
     <div class="hud">
       <div class="title"><div class="eyebrow" id="projId">No project yet</div><h1 id="projTitle">Start a request to staff the floor</h1></div>
-      <div class="stat"><span class="eyebrow">Status</span><span class="status-chip" id="statusChip" data-s="Intake">Intake</span></div>
+      <div class="stat"><span class="eyebrow">Status</span><span class="status-row"><span class="status-chip" id="statusChip" data-s="Intake">Intake</span><button class="btn signal sm" id="resumeBtn" type="button" hidden>Resume</button><button class="btn sm" id="stopBtn" type="button" hidden>Stop</button></span></div>
       <div class="stat"><span class="eyebrow">Agents on it</span><b id="activeAgents">0</b></div>
       <div class="stat"><span class="eyebrow">Tokens</span><b id="tokens">0</b></div>
       <div class="stat"><span class="eyebrow">Cost (USD)</span><b id="cost">0.0000</b></div>
@@ -290,16 +290,22 @@
     const chipEl = $("#statusChip");
     const label = { Intake: "Intake", Running: "Running", WaitingGate: "Waiting for you", WaitingCustomer: "Waiting for customer", Completed: "Live", Stopped: "Stopped", Failed: "Failed" }[s] || s;
     chipEl.dataset.s = s; chipEl.textContent = label;
+    if (s === "Stopped" || s === "Failed" || s === "Completed") { S.gate = null; renderGate(); }
+    const paused = (s === "Stopped" || s === "Failed") && SLOTS.every(([k]) => S.brief[k]);
+    $("#resumeBtn").hidden = DEMO || !paused;
+    $("#stopBtn").hidden = DEMO || !(s === "Running" || s === "WaitingGate" || s === "WaitingCustomer");
     updateComposer();
   }
 
   function updateComposer() {
-    const can = !DEMO && S.id && (S.status === "Intake" || S.status === "WaitingCustomer" || S.status === "Running" || S.status === "WaitingGate" || S.status === "Completed");
+    const can = !DEMO && S.id && ["Intake", "WaitingCustomer", "Running", "WaitingGate", "Completed", "Stopped", "Failed"].includes(S.status);
     $("#chatInput").disabled = !can; $("#sendBtn").disabled = !can;
     $("#composerNote").textContent = DEMO ? "This is a recorded run. Start the app locally to chat as the customer."
       : !S.id ? "Press New request, or Run sample request to watch a full project."
       : S.status === "WaitingCustomer" ? "An agent asked you something above. Your reply goes straight to them."
-      : S.status === "Intake" ? "The intake agent fills the five chips above as you answer." : "";
+      : S.status === "Intake" ? "The intake agent fills the five chips above as you answer."
+      : S.status === "Stopped" || S.status === "Failed" ? "The project is paused. Press Resume to continue from the last finished step, or ask for its status here."
+      : "";
   }
 
   function activeCount() {
@@ -586,6 +592,12 @@
 
     if (DEMO) { $("#replayBtn").onclick = replay; return; }
 
+    $("#resumeBtn").onclick = async () => {
+      try { await api.send("POST", `/projects/${S.id}/resume`); } catch (e) { toast(e.message); }
+    };
+    $("#stopBtn").onclick = async () => {
+      try { await api.send("POST", `/projects/${S.id}/stop`); } catch (e) { toast(e.message); }
+    };
     $("#newBtn").onclick = () => newProject(false);
     $("#sampleBtn").onclick = () => newProject(true);
     $("#projectPick").onchange = e => { S.sample = false; openProject(e.target.value); };

@@ -209,6 +209,15 @@ app.MapPost("/api/projects/{id}/gate", (string id, GateIn g, Orchestrator orc) =
     return orc.Decide(p, g.Decision, g.Note) ? Results.Ok() : Results.Conflict(new { error = "Nothing is waiting for approval." });
 });
 
+app.MapPost("/api/projects/{id}/resume", (string id, Orchestrator orc) =>
+{
+    var p = store.Get(id);
+    if (p == null) return Results.NotFound();
+    if (!orc.CanResume(p)) return Results.Conflict(new { error = "Only a stopped or failed project with a finished intake can be resumed." });
+    orc.Resume(p);
+    return Results.Ok();
+});
+
 app.MapPost("/api/projects/{id}/stop", (string id, Orchestrator orc) =>
 {
     var p = store.Get(id);

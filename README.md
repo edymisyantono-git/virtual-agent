@@ -77,6 +77,15 @@ halaman **Registry** di aplikasi (perubahan disimpan kembali ke file).
 - **Lebar panel kiri dan kanan** bisa diatur dengan menyeret garis pemisah (atau tombol panah
   saat pemisah fokus). Klik dua kali untuk kembali ke lebar default. Tersimpan per browser.
 
+## Berhenti dan melanjutkan
+
+Server yang dimatikan atau di-restart menghentikan pipeline yang sedang berjalan. Proyeknya tampil
+**Stopped** (bukan "Running" terus-menerus). Tekan **Resume** di sebelah status untuk melanjutkan:
+tahap yang sudah selesai dan gate yang sudah disetujui dilewati, tahap yang setengah jalan
+dikerjakan ulang. Tombol **Stop** menghentikan proyek secara manual. Saat proyek berhenti, chat tetap
+terbuka: tanyakan "status" dan agent menjawab dengan tahap, biaya, dan apa yang ditunggu.
+Resume memakai engine yang sedang aktif, jadi pastikan server berjalan di mode yang Anda inginkan.
+
 ## Mengendalikan biaya token
 
 Run live pertama (proyek APD, 11 modul) menghabiskan $13 dan belum selesai, karena tiap agent
