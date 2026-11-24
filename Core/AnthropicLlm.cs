@@ -6,6 +6,8 @@ namespace VirtualCompany.Core;
 public interface ILlmClient
 {
     bool IsLive { get; }
+    /// Can run tool-using agents that write and build real files (code mode).
+    bool SupportsTools => false;
     Task<LlmResult> CompleteAsync(LlmRequest req, Project project, CancellationToken ct);
 }
 

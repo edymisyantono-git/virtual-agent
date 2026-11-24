@@ -49,7 +49,8 @@
     }
   ],
   "budget": {
-    "maxTokensPerProject": 600000
+    "maxTokensPerProject": 600000,
+    "maxUsdPerProject": 8
   },
   "departments": {
     "support": {
@@ -221,9 +222,17 @@
         "architect"
       ],
       "maxOutputTokens": 10000,
-      "persona": "You build the frontend for the module you are assigned: list the pages and components, then write the key component code. Follow the UX spec and the API contract exactly.",
+      "persona": "You build the pages for your assigned module as plain HTML/CSS/JavaScript in wwwroot that call the API with fetch. Follow the UX spec; keep it simple, clean and usable.",
       "outputs": [
         "frontend"
+      ],
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Bash"
       ]
     },
     {
@@ -240,9 +249,17 @@
         "architect"
       ],
       "maxOutputTokens": 10000,
-      "persona": "You build the backend for the module you are assigned: endpoints, validation, business rules enforcement, and the key service code. Reference business rule ids (BR-xx) in comments where they are enforced.",
+      "persona": "You build the server side for your assigned module: minimal API endpoints, validation, business rules (reference BR-xx in comments), authorization by role, and fake adapters for external systems.",
       "outputs": [
         "backend"
+      ],
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Bash"
       ]
     },
     {
@@ -258,9 +275,17 @@
         "architect"
       ],
       "maxOutputTokens": 7000,
-      "persona": "You write the database migration scripts (CREATE TABLE with keys, indexes and constraints), seed data, and the reporting views that the KPIs will need.",
+      "persona": "You own the data layer: EF Core entities, the DbContext with SQLite, seed data (demo users per role, sample catalog), and the queries the reports need. Create the database on startup (EnsureCreated or migrations).",
       "outputs": [
         "database"
+      ],
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Bash"
       ]
     },
     {
@@ -282,6 +307,12 @@
       "persona": "You test the build against the acceptance criteria: write test cases (id, steps, expected), the UAT scenario for every role, run them against the code you were given, and report defects with severity. Put {\"bugs\": n, \"defects\": [\"...\"]} in the handoff data; n = 0 means ready to release.",
       "outputs": [
         "test-report"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Bash"
       ]
     },
     {
@@ -303,6 +334,11 @@
       "persona": "You review the architecture and code for security: authentication and authorization gaps, injection, secrets handling, data exposure, logging, and OWASP Top 10 items. Give each finding a severity and a fix. Block the release (status blocked) only for critical findings.",
       "outputs": [
         "security-review"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep"
       ]
     },
     {
@@ -320,9 +356,17 @@
         "security"
       ],
       "maxOutputTokens": 4000,
-      "persona": "You prepare the release: CI/CD pipeline stages, environment configuration (staging, production), container/hosting setup, domain and SSL, database migration order, backup and rollback plan, and monitoring alerts.",
+      "persona": "You make the app easy to run and hand over: a README with how to start it, the demo users and what to try first, sensible appsettings, and a check that `dotnet run` starts cleanly.",
       "outputs": [
         "release-plan"
+      ],
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Bash"
       ]
     },
     {
@@ -442,7 +486,8 @@
         "frontend_dev",
         "backend_dev",
         "db_dev"
-      ]
+      ],
+      "verify": "dotnet-build"
     },
     {
       "id": "qa",
@@ -486,5 +531,12 @@
         "data_analyst"
       ]
     }
-  ]
+  ],
+  "codeMode": {
+    "enabled": true,
+    "stack": "ASP.NET Core 9 + SQLite (EF Core), plain HTML/JS in wwwroot",
+    "maxCallUsd": 3,
+    "maxTurns": 60,
+    "appPort": 5300
+  }
 }

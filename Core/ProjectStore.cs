@@ -70,6 +70,8 @@ public class ProjectStore
         }
     }
 
+    public string AppDir(Project p) => Path.Combine(_root, p.Id, "app");
+
     public string ArtifactPath(Project p, string name) => Path.Combine(_root, p.Id, "artifacts", Path.GetFileName(name));
 
     public void WriteArtifact(Project p, ArtifactRef a, string content)

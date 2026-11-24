@@ -43,7 +43,19 @@
       this._tick = this._tick.bind(this);
     }
 
+    // Fresh floor for a project: one card per role, with the entrance animation.
     build(meta) {
+      this.extra = {}; this._models = {};
+      this._layout(meta);
+      this.svg.classList.add("intro");
+      clearTimeout(this._introTimer);
+      this._introTimer = setTimeout(() => this.svg.classList.remove("intro"), 1600);
+    }
+
+    // Every node for a role: the lead card plus one card per extra instance.
+    nodesOf(id) { return Object.values(this.nodes).filter(n => n.base === id); }
+
+    _layout(meta) {
       this.meta = meta;
       const svg = this.svg;
       svg.innerHTML = "";
@@ -54,7 +66,12 @@
 
       // members per department, in pipeline order
       const members = {};
-      meta.pipeline.forEach(s => s.agents.forEach(a => { const d = agents[a]?.department; if (d) (members[d] ||= []).push(a); }));
+      // Running more than one instance of a role gives each instance its own card: "id", "id#2", "id#3"...
+      meta.pipeline.forEach(s => s.agents.forEach(a => {
+        const d = agents[a]?.department; if (!d) return;
+        (members[d] ||= []).push(a);
+        for (let k = 2; k <= (this.extra[a] || 1); k++) members[d].push(`${a}#${k}`);
+      }));
       const divisions = DIVISIONS.map(v => ({ ...v, depts: v.depts.filter(d => members[d]) }));
       const known = new Set(DIVISIONS.flatMap(v => v.depts));
       Object.keys(members).filter(d => !known.has(d)).forEach(d => divisions[1].depts.push(d));   // new departments join Product & Technology
@@ -109,8 +126,10 @@
           el("text", { x: hx + 19, y: b.hy, class: "dept-name" }, hg).textContent = meta.departments[d]?.name || d;
           this.heads[d] = hg;
 
-          members[d].forEach((a, k) => {
+          members[d].forEach((key, k) => {
+            const a = key.split("#")[0], inst = Number(key.split("#")[1] || 1);
             const def = agents[a];
+            const many = (this.extra[a] || 1) > 1;
             const x = hx + (k % 2) * (CARD_W + CARD_GAP), y = b.hy + 15 + Math.floor(k / 2) * (CARD_H + CARD_GAP);
             const g = el("g", { class: "node", style: `--dc: var(--d-${d}); --i: ${idx++}; --c: ${vi * 3 + bi}` }, top);
             el("rect", { x, y, width: CARD_W, height: CARD_H, rx: 8, class: "card" }, g);
@@ -118,7 +137,7 @@
             el("circle", { cx: ax, cy: ay, r: 16, class: "ring" }, g);
             el("circle", { cx: ax, cy: ay, r: 12, class: "core" }, g);
             el("text", { x: ax, y: ay, class: "ini" }, g).textContent = def.initials || a.slice(0, 2).toUpperCase();
-            const lines2 = wrap(def.role, 14);
+            const lines2 = wrap(many ? `${def.role} #${inst}` : def.role, 14);
             const t = el("text", { x: x + 36, y: y + (lines2.length > 1 ? 14 : 19), class: "role" }, g);
             lines2.forEach((ln, i) => { el("tspan", { x: x + 36, dy: i ? "1.15em" : 0 }, t).textContent = ln; });
             const mt = el("text", { x: x + 36, y: y + CARD_H - 7, class: "model" }, g);
@@ -134,10 +153,10 @@
             g.setAttribute("aria-label", `${def.role}${def.disabled ? " (off)" : ""}: settings`);
             g.addEventListener("click", () => this.onAgentClick?.(a));
             g.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); this.onAgentClick?.(a); } });
-            this.nodes[a] = { g, x, y, cx: x + CARD_W / 2, ax, ay, hy: b.hy, trunk: tx, div: v.id, dept: d, sats, satEls: [], badge: bt, modelText: mt, def };
-            this.nodes[a].off = !!def.disabled;
+            this.nodes[key] = { g, x, y, cx: x + CARD_W / 2, ax, ay, hy: b.hy, trunk: tx, div: v.id, dept: d, sats, satEls: [], badge: bt, modelText: mt, def, base: a, inst };
+            this.nodes[key].off = !!def.disabled;
             if (def.disabled) g.classList.add("off");
-            this.setModel(a, def.resolvedModel, def.modelSource);
+            this._model(this.nodes[key], def.resolvedModel, def.modelSource);
           });
         });
       });
@@ -180,16 +199,22 @@
     applyMeta(meta) {
       this.meta = meta;
       this._stageMap(meta);
-      meta.agents.forEach(a => {
-        const n = this.nodes[a.id]; if (!n) return;
+      meta.agents.forEach(a => this.nodesOf(a.id).forEach(n => {
         n.off = !!a.disabled;
         n.g.classList.toggle("off", n.off);
         n.g.setAttribute("aria-label", `${a.role}${n.off ? " (off)" : ""}: settings`);
-      });
+      }));
     }
 
     setModel(agentId, model, source) {
-      const n = this.nodes[agentId]; if (!n || !model) return;
+      (this._models ||= {})[agentId] = { model, source };
+      this.nodesOf(agentId).forEach(n => this._model(n, model, source));
+    }
+
+    _model(n, model, source) {
+      const remembered = this._models?.[n.base];
+      if (remembered) ({ model, source } = remembered);
+      if (!n || !model) return;
       const m = modelOf(this.meta, model);
       n.modelText.textContent = n.off ? "Off" : (m ? m.label : model.replace("claude-", "")) + (source && source.includes("override") ? " \u2605" : "");
       n.modelText.setAttribute("fill", `var(--t-${m ? m.tier : "sonnet"})`);
@@ -211,44 +236,39 @@
     }
 
     setAgent(agentId, instance, status) {
-      const n = this.nodes[agentId]; if (!n) return;
-      if (n.satEls.length > 0 && instance) {
-        const s = n.satEls[instance - 1];
-        if (s) s.setAttribute("class", "sat " + status);
-        const states = n.satEls.map(e => e.getAttribute("class"));
-        const agg = states.some(c => c.includes("working")) ? "working" : states.every(c => c.includes("done")) ? "done" : status;
-        n.g.setAttribute("class", "node has-badge " + agg + (n.off ? " off" : ""));
-      } else {
-        n.g.setAttribute("class", "node " + status + (n.satEls.length ? " has-badge" : "") + (n.off ? " off" : ""));
-      }
+      const n = (instance > 1 && this.nodes[`${agentId}#${instance}`]) || this.nodes[agentId];
+      if (!n) return;
+      n.g.setAttribute("class", "node " + status + (n.off ? " off" : ""));
       this._busy();
     }
 
+    // More instances of a role are working: give each its own card. The floor is redrawn and every card,
+    // gate and the owner box keep their current state.
     spawn(agentId, count) {
-      const n = this.nodes[agentId]; if (!n || count < 2) return;
-      n.sats.innerHTML = ""; n.satEls = [];
-      n.badge.textContent = "\u00d7" + count;
-      for (let k = 0; k < count; k++) {
-        const tx = n.x + CARD_W - 10 - k * 9, ty = n.y + CARD_H - 10;
-        const c = el("circle", { cx: n.ax, cy: n.ay, r: 3.4, class: "sat" }, n.sats);
-        n.satEls.push(c);
-        const t0 = performance.now(), dur = reduced || this.quiet ? 1 : 600 + k * 110;
-        const step = now => {
-          const t = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - t, 3);
-          c.setAttribute("cx", n.ax + (tx - n.ax) * e); c.setAttribute("cy", n.ay + (ty - n.ay) * e - Math.sin(t * Math.PI) * 14);
-          if (t < 1) requestAnimationFrame(step);
-        };
-        requestAnimationFrame(step);
+      if (!this.meta || count <= (this.extra[agentId] || 1)) return;
+      const keep = {};
+      for (const k in this.nodes) keep[k] = this.nodes[k].g.getAttribute("class");
+      const chips = {};
+      for (const k in this.gateChips) chips[k] = this.gateChips[k].getAttribute("class");
+      const owner = this.owner?.getAttribute("class"), ownerSub = this.ownerSub?.textContent;
+      this.packets.forEach(p => p.g.remove()); this.packets = [];
+      this.extra[agentId] = count;
+      this._layout(this.meta);
+      for (const k in this.nodes) {
+        if (keep[k]) this.nodes[k].g.setAttribute("class", keep[k]);
+        else if (!this.quiet && !reduced) this.nodes[k].g.classList.add("spawned");   // only the new cards animate in
       }
-      n.g.classList.add("has-badge");
+      for (const k in chips) this.gateChips[k]?.setAttribute("class", chips[k]);
+      if (owner) this.owner.setAttribute("class", owner);
+      if (ownerSub) this.ownerSub.textContent = ownerSub;
+      this._busy();
     }
 
     stage(stageId, status) {
       if (status !== "running") return;
-      (this.stageAgents[stageId] || []).forEach(id => {
-        const n = this.nodes[id];
-        if (n && !n.g.classList.contains("working")) n.g.setAttribute("class", "node" + (n.satEls.length ? " has-badge" : "") + (n.off ? " off" : ""));
-      });
+      (this.stageAgents[stageId] || []).forEach(id => this.nodesOf(id).forEach(n => {
+        if (!n.g.classList.contains("working")) n.g.setAttribute("class", "node" + (n.off ? " off" : ""));
+      }));
     }
 
     gate(stageId, status) {
@@ -259,7 +279,7 @@
       if (status === "waiting") {
         const label = this.stages.find(s => s.id === stageId)?.gate?.label;
         this.ownerSub.textContent = label ? label.replace(/^Approve /, "Approve ").slice(0, 26) : "Your decision";
-        (this.stageAgents[stageId] || []).forEach((a, i) => setTimeout(() => this._send(this.nodes[a], "owner", ""), i * 80));
+        (this.stageAgents[stageId] || []).flatMap(a => this.nodesOf(a)).forEach((n, i) => setTimeout(() => this._send(n, "owner", ""), i * 80));
       } else {
         this.ownerSub.textContent = "Approves the gates";
         if (status === "approved") setTimeout(() => this.owner.classList.remove("approved"), 1400);
@@ -268,17 +288,17 @@
 
     handoff(fromStage, toStage) {
       const viaOwner = !!this.stages.find(s => s.id === fromStage)?.gate;
-      const to = (this.stageAgents[toStage] || []).map(a => this.nodes[a]).filter(Boolean);
+      const to = (this.stageAgents[toStage] || []).flatMap(a => this.nodesOf(a));
       if (viaOwner) { to.forEach((b, i) => setTimeout(() => this._send("owner", b, ""), i * 80)); return; }
-      const from = (this.stageAgents[fromStage] || []).map(a => this.nodes[a]).filter(Boolean);
+      const from = (this.stageAgents[fromStage] || []).flatMap(a => this.nodesOf(a));
       let k = 0;
       from.forEach(a => to.forEach(b => setTimeout(() => this._send(a, b, ""), (k++) * 70)));
     }
 
     loop(fromStage) {
       const st = this.stages.find(s => s.id === fromStage);
-      const from = (this.stageAgents[fromStage] || []).map(a => this.nodes[a]).filter(Boolean);
-      const to = (this.stageAgents[st?.loop?.backTo] || []).map(a => this.nodes[a]).filter(Boolean);
+      const from = (this.stageAgents[fromStage] || []).flatMap(a => this.nodesOf(a));
+      const to = (this.stageAgents[st?.loop?.backTo] || []).flatMap(a => this.nodesOf(a));
       from.forEach(a => to.forEach((b, i) => setTimeout(() => this._send(a, b, "loop", 1300), i * 120)));
     }
 

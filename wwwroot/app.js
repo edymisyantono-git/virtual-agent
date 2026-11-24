@@ -69,7 +69,7 @@
   <section class="panel stage" aria-label="Operations floor">
     <div class="hud">
       <div class="title"><div class="eyebrow" id="projId">No project yet</div><h1 id="projTitle">Start a request to staff the floor</h1></div>
-      <div class="stat"><span class="eyebrow">Status</span><span class="status-row"><span class="status-chip" id="statusChip" data-s="Intake">Intake</span><button class="btn signal sm" id="resumeBtn" type="button" hidden>Resume</button><button class="btn sm" id="stopBtn" type="button" hidden>Stop</button></span></div>
+      <div class="stat"><span class="eyebrow">Status</span><span class="status-row"><span class="status-chip" id="statusChip" data-s="Intake">Intake</span><button class="btn signal sm" id="resumeBtn" type="button" hidden>Resume</button><button class="btn sm" id="stopBtn" type="button" hidden>Stop</button><a class="btn primary sm" id="openAppBtn" target="_blank" rel="noopener" hidden>Open app</a><button class="btn sm" id="startAppBtn" type="button" hidden>Start app</button><button class="btn sm" id="stopAppBtn" type="button" hidden>Stop app</button></span></div>
       <div class="stat"><span class="eyebrow">Agents on it</span><b id="activeAgents">0</b></div>
       <div class="stat"><span class="eyebrow">Tokens</span><b id="tokens">0</b></div>
       <div class="stat"><span class="eyebrow">Cost (USD)</span><b id="cost">0.0000</b></div>
@@ -299,7 +299,16 @@
     const paused = (s === "Stopped" || s === "Failed") && SLOTS.every(([k]) => S.brief[k]);
     $("#resumeBtn").hidden = DEMO || !paused;
     $("#stopBtn").hidden = DEMO || !(s === "Running" || s === "WaitingGate" || s === "WaitingCustomer");
+    renderApp();
     updateComposer();
+  }
+
+  function renderApp() {
+    const open = $("#openAppBtn");
+    open.hidden = DEMO || !S.appUrl;
+    if (S.appUrl) open.href = S.appUrl;
+    $("#startAppBtn").hidden = DEMO || !S.appExists || !!S.appUrl || ["Running", "WaitingGate", "WaitingCustomer"].includes(S.status);
+    $("#stopAppBtn").hidden = DEMO || !S.appUrl;
   }
 
   function updateComposer() {
@@ -338,7 +347,7 @@
         if (d.status === "running") feed("info", null, `${stageTitle(d.stageId)} started${d.round > 1 ? ` \u00b7 round ${d.round}` : ""}`, null, ts);
         break;
       case "agent": {
-        const a = agent(d.agentId); const inst = d.instance > 1 || viz.nodes[d.agentId]?.satEls.length ? ` #${d.instance}` : "";
+        const a = agent(d.agentId); const inst = d.instance > 1 || (viz.extra?.[d.agentId] || 1) > 1 ? ` #${d.instance}` : "";
         viz.setAgent(d.agentId, d.instance, d.status);
         if (d.model) viz.setModel(d.agentId, d.model, d.source);
         if (d.status === "working") feed("info", d.agentId, `${a?.role}${inst} is working${d.module ? ` on ${d.module}` : ""}`, `${modelInfo(d.model)?.label || d.model} \u00b7 ${d.source}`, ts);
@@ -366,7 +375,14 @@
       case "usage": S.tokens = d.tokensIn + d.tokensOut; S.cost = d.cost;
         tweenNum("tokens", S.tokens, v => Math.round(v).toLocaleString()); tweenNum("cost", S.cost, v => v.toFixed(4)); break;
       case "feedback": viz.feedback(); feed("ok", "data_analyst", `Feedback to Project Manager: ${d.summary}`, "continuous improvement", ts); break;
-      case "log": feed(d.level === "error" ? "loop" : "info", null, d.text, null, ts); break;
+      case "log": feed(d.level === "error" ? "loop" : d.level === "ok" ? "ok" : d.level === "warn" ? "gate" : "info", null, d.text, null, ts); break;
+      case "app":
+        S.appExists = true;
+        S.appUrl = d.status === "running" ? d.url : null;
+        renderApp();
+        if (d.status === "running") feed("ok", null, `The app is running at ${d.url}`, "Open app (top of the floor) to try it", ts);
+        if (d.status === "failed") feed("loop", null, "The app could not be started", (d.error || "").split("\n").slice(0, 3).join(" | "), ts);
+        break;
     }
   }
 
@@ -379,7 +395,8 @@
 
   // ---------------- project lifecycle ----------------
   function resetFloor() {
-    Object.assign(S, { status: "Intake", title: "", brief: {}, artifacts: [], tokens: 0, cost: 0, firstTs: null, lastTs: null, gate: null, stageIdx: {} });
+    Object.assign(S, { status: "Intake", title: "", brief: {}, artifacts: [], tokens: 0, cost: 0, firstTs: null, lastTs: null, gate: null, stageIdx: {}, appExists: false, appUrl: null });
+    renderApp();
     for (const k in tweens) delete tweens[k];
     $("#messages").innerHTML = ""; $("#feed").innerHTML = "";
     $("#tokens").textContent = "0"; $("#cost").textContent = "0.0000"; $("#elapsed").textContent = "0:00";
@@ -392,6 +409,7 @@
     if (!id) { S.overrides = {}; $("#projId").textContent = "No project yet"; $("#projTitle").textContent = "Start a request to staff the floor"; renderModels(); return; }
     const p = await api.get(`/projects/${id}`);
     S.overrides = p.modelOverrides || {}; $("#autoApprove").checked = !!p.autoApprove;
+    S.appExists = !!p.appExists; S.appUrl = p.appUrl || null;
     $("#projId").textContent = p.id; $("#projTitle").textContent = p.title;
     renderModels(); refreshModelLabels();
     S.replaying = true; viz.quiet = true;
@@ -606,6 +624,15 @@
 
     $("#resumeBtn").onclick = async () => {
       try { await api.send("POST", `/projects/${S.id}/resume`); } catch (e) { toast(e.message); }
+    };
+    $("#startAppBtn").onclick = async () => {
+      const b = $("#startAppBtn"); b.disabled = true; b.textContent = "Starting\u2026";
+      try { const r = await api.send("POST", `/projects/${S.id}/app/start`); S.appUrl = r.url; renderApp(); toast(`The app is running at ${r.url}`); }
+      catch (e) { toast("The app could not start: " + e.message.split("\n")[0]); }
+      finally { b.disabled = false; b.textContent = "Start app"; }
+    };
+    $("#stopAppBtn").onclick = async () => {
+      try { await api.send("POST", `/projects/${S.id}/app/stop`); S.appUrl = null; renderApp(); } catch (e) { toast(e.message); }
     };
     $("#stopBtn").onclick = async () => {
       try { await api.send("POST", `/projects/${S.id}/stop`); } catch (e) { toast(e.message); }

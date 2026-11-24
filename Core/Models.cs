@@ -10,6 +10,7 @@ public class RegistryConfig
     public DefaultsDef Defaults { get; set; } = new();
     public List<ModelDef> Models { get; set; } = new();
     public BudgetDef Budget { get; set; } = new();
+    public CodeModeDef CodeMode { get; set; } = new();
     public Dictionary<string, DepartmentDef> Departments { get; set; } = new();
     public Dictionary<string, string?> Overrides { get; set; } = new();
     public List<AgentDef> Agents { get; set; } = new();
@@ -37,6 +38,21 @@ public class ModelDef
 public class BudgetDef
 {
     public long MaxTokensPerProject { get; set; } = 3_000_000;
+    /// Dollar budget per project (0 = off). Tool-using agents re-read cached context every turn, so dollars
+    /// are a better stop signal than raw token counts.
+    public decimal MaxUsdPerProject { get; set; }
+}
+
+/// Engineering agents write and run a real application in data/projects/{id}/app.
+public class CodeModeDef
+{
+    public bool Enabled { get; set; }
+    public string Stack { get; set; } = "ASP.NET Core 9 + SQLite";
+    /// Hard dollar cap for one tool-using agent call (Agent SDK maxBudgetUsd).
+    public decimal MaxCallUsd { get; set; } = 3m;
+    public int MaxTurns { get; set; } = 60;
+    /// Ports: the running app for you starts here; QA test runs use AppPort + 50.
+    public int AppPort { get; set; } = 5300;
 }
 
 public class DepartmentDef
@@ -61,6 +77,8 @@ public class AgentDef
     public List<string>? Reads { get; set; }
     /// Hard cap on one reply from this agent; falls back to defaults.maxOutputTokens.
     public int? MaxOutputTokens { get; set; }
+    /// Agent SDK tools this role may use in code mode, e.g. ["Read","Write","Edit","Glob","Grep","Bash"].
+    public List<string>? Tools { get; set; }
     /// Temporarily switched off: the orchestrator skips this agent (and a stage with no active agents).
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Disabled { get; set; }
@@ -77,6 +95,8 @@ public class StageDef
     public List<string> Agents { get; set; } = new();
     public GateDef? Gate { get; set; }
     public LoopDef? Loop { get; set; }
+    /// "dotnet-build": after this stage the orchestrator builds the app and sends errors back for fixing.
+    public string? Verify { get; set; }
 }
 
 public class GateDef
@@ -116,6 +136,9 @@ public class Project
     public ProjectPlan? Plan { get; set; }
     /// Tokens added on top of budget.maxTokensPerProject each time you approve the budget gate.
     public long ExtraBudget { get; set; }
+    public decimal ExtraUsd { get; set; }
+    /// Where the generated app runs for you, when it is running.
+    public string? AppUrl { get; set; }
     public long TokensIn { get; set; }
     public long TokensOut { get; set; }
     public decimal Cost { get; set; }
@@ -196,7 +219,8 @@ public class Handoff
     public System.Text.Json.Nodes.JsonObject? Data { get; set; }
 }
 
-public record LlmRequest(string AgentId, string Model, string Effort, int MaxTokens, string System, List<(string Role, string Text)> Messages);
+public record LlmRequest(string AgentId, string Model, string Effort, int MaxTokens, string System, List<(string Role, string Text)> Messages,
+    List<string>? Tools = null, string? Cwd = null, int MaxTurns = 1, decimal? MaxBudgetUsd = null);
 
 /// CostUsd is set when the engine reports its own cost (Agent SDK); otherwise it is computed from agents.json prices.
 public record LlmResult(string Text, int InputTokens, int OutputTokens, string StopReason, decimal? CostUsd = null);

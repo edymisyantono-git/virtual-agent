@@ -29,9 +29,11 @@ public class Orchestrator
         public SemaphoreSlim BudgetLock = new(1, 1);   // parallel agents share one budget gate
     }
 
-    public Orchestrator(AgentRegistry reg, ProjectStore store, ILlmClient llm, ILogger<Orchestrator> log)
+    private readonly AppWorkspace _app;
+
+    public Orchestrator(AgentRegistry reg, ProjectStore store, ILlmClient llm, AppWorkspace app, ILogger<Orchestrator> log)
     {
-        _reg = reg; _store = store; _llm = llm; _log = log;
+        _reg = reg; _store = store; _llm = llm; _app = app; _log = log;
     }
 
     public bool IsLive => _llm.IsLive;
@@ -118,6 +120,11 @@ public class Orchestrator
             sb.AppendLine($"- {a.Title} [{a.Name}]{(string.IsNullOrWhiteSpace(summary) ? "" : $": {summary}")}");
         }
         if (p.PendingGate != null) sb.AppendLine($"Waiting for the owner's approval: {p.PendingGate.Label}");
+        if (Code)
+            sb.AppendLine(p.AppUrl != null
+                ? $"THE APP IS RUNNING for the customer to test at {p.AppUrl} (also the 'Open app' button above the floor). Source code is included in 'Download all (.zip)'."
+                : _app.Exists(p) ? "The app's source exists; it can be started with the 'Start app' button above the floor, then opened with 'Open app'."
+                : "No runnable app has been built yet.");
         List<VcEvent> events;
         lock (p) events = p.Events.Where(e => e.Type == "gate" && e.Data.GetValueOrDefault("status")?.ToString() != "waiting").ToList();
         if (events.Count > 0)
@@ -294,6 +301,7 @@ public class Orchestrator
                 _store.Save(p);
             }
 
+            await LaunchAppAsync(p, ct);
             var feedback = p.Runs.LastOrDefault(r => r.AgentId == "data_analyst");
             if (feedback != null)
                 _store.Publish(p, "feedback", new { from = "data_analyst", to = "project_manager", summary = feedback.Summary });
@@ -325,7 +333,13 @@ public class Orchestrator
     private async Task<List<StageResult>> RunStageAsync(Project p, StageDef st, int round, string? note, CancellationToken ct)
     {
         SetStage(p, st.Id, "running", round);
-        var tasks = new List<Task<StageResult>>();
+        var sequential = Code && st.Agents.Where(IsActive).Select(_reg.Require).Any(UsesTools);
+        if (Code && (sequential || st.Verify != null))
+        {
+            var scaffold = await _app.EnsureScaffoldAsync(p, ct);
+            if (!scaffold.Ok) _store.Publish(p, "log", new { level = "error", text = "Could not create the app project: " + AppWorkspace.Tail(scaffold.Output, 6) });
+        }
+        var jobs = new List<Func<Task<StageResult>>>();
         foreach (var agentId in st.Agents.Where(IsActive))
         {
             var def = _reg.Require(agentId);
@@ -343,12 +357,94 @@ public class Orchestrator
             for (var k = 0; k < count; k++)
             {
                 var inst = k + 1; var module = assignments[k];
-                tasks.Add(RunAgentAsync(p, st, def, inst, module, round, note, ct));
+                jobs.Add(() => RunAgentAsync(p, st, def, inst, module, round, note, ct));
             }
         }
-        var results = (await Task.WhenAll(tasks)).ToList();
+        var results = sequential ? await RunSequentialAsync(jobs) : (await Task.WhenAll(jobs.Select(j => j()))).ToList();
+        await VerifyBuildAsync(p, st, round, ct);
         SetStage(p, st.Id, "done", round);
         return results;
+    }
+
+    // ================= Code mode: agents write, build and run a real app =================
+
+    private bool Code => _reg.Config.CodeMode.Enabled;
+
+    private string AppFileList(Project p)
+    {
+        var dir = _app.Dir(p);
+        if (!Directory.Exists(dir)) return "(none yet)";
+        var files = Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)
+            .Select(f => Path.GetRelativePath(dir, f).Replace('\\', '/'))
+            .Where(f => !f.StartsWith("bin/") && !f.StartsWith("obj/") && !f.EndsWith(".db"))
+            .OrderBy(f => f).Take(80).ToList();
+        return files.Count == 0 ? "(none yet)" : string.Join(", ", files);
+    }
+
+    /// This role works with real files right now (code mode on, engine can run tools, role has tools).
+    private bool UsesTools(AgentDef def) => Code && _llm.SupportsTools && def.Tools is { Count: > 0 };
+
+    private int TestPort => _reg.Config.CodeMode.AppPort + 50;
+
+    /// Tool-using agents share one folder, so they take turns instead of running in parallel.
+    private async Task<List<StageResult>> RunSequentialAsync(IEnumerable<Func<Task<StageResult>>> jobs)
+    {
+        var results = new List<StageResult>();
+        foreach (var job in jobs) results.Add(await job());
+        return results;
+    }
+
+    /// After a coding stage: build the app; on errors send them back to a developer, at most twice.
+    private async Task VerifyBuildAsync(Project p, StageDef st, int round, CancellationToken ct)
+    {
+        if (!Code || st.Verify != "dotnet-build") return;
+        for (var attempt = 1; ; attempt++)
+        {
+            _store.Publish(p, "log", new { level = "info", text = "Build check: running dotnet build on the app..." });
+            var b = await _app.BuildAsync(p, ct);
+            if (b.Ok) { _store.Publish(p, "log", new { level = "ok", text = "Build check passed: the app compiles." }); return; }
+            var errors = AppWorkspace.Tail(b.Output, 40);
+            _store.Publish(p, "log", new { level = "error", text = $"Build check failed (attempt {attempt}):\n{AppWorkspace.Tail(b.Output, 6)}" });
+            var fixer = new[] { "backend_dev", "frontend_dev", "db_dev" }.Select(_reg.Get).FirstOrDefault(d => d is { Disabled: false } && UsesTools(d));
+            if (attempt > 2 || fixer == null)
+            {
+                _store.Publish(p, "log", new { level = "warn", text = "The app still does not build; QA will report it." });
+                return;
+            }
+            await RunAgentAsync(p, st, fixer, 1, null, round + attempt, "BUILD FAILED. Fix every error below, then run `dotnet build` until it succeeds:\n" + errors, ct);
+        }
+    }
+
+    /// Code mode: build and start the finished app so the owner can open it.
+    private async Task LaunchAppAsync(Project p, CancellationToken ct)
+    {
+        if (!Code || !_app.Exists(p)) return;
+        try
+        {
+            var url = await _app.StartAsync(p, _reg.Config.CodeMode.AppPort, ct);
+            _store.Publish(p, "app", new { status = "running", url });
+            AddChat(p, "agent", IsActive("devops") ? "devops" : "support", $"Your app is running at {url}. Open it from the 'Open app' button on the floor to try it.");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _store.Publish(p, "app", new { status = "failed", error = ex.Message });
+            _store.Publish(p, "log", new { level = "error", text = "The app could not be started: " + AppWorkspace.Tail(ex.Message, 6) });
+        }
+    }
+
+    public async Task<string> StartAppAsync(Project p)
+    {
+        var url = await _app.StartAsync(p, _reg.Config.CodeMode.AppPort, CancellationToken.None);
+        _store.Publish(p, "app", new { status = "running", url });
+        _store.Save(p);
+        return url;
+    }
+
+    public void StopApp(Project p)
+    {
+        _app.Stop(p);
+        _store.Publish(p, "app", new { status = "stopped" });
+        _store.Save(p);
     }
 
     private async Task<List<StageResult>> RunLoopStageAsync(Project p, StageDef st, CancellationToken ct)
@@ -431,7 +527,7 @@ public class Orchestrator
         {
             var plan = new ProjectPlan
             {
-                Modules = handoff.Data["modules"]?.AsArray().Select(x => x?.ToString() ?? "").Where(x => x.Length > 0).ToList() ?? new(),
+                Modules = handoff.Data["modules"]?.AsArray().Select(ModuleName).Where(x => x.Length > 0).ToList() ?? new(),
                 Instances = handoff.Data["instances"]?.AsObject().ToDictionary(kv => kv.Key, kv => kv.Value?.GetValue<int>() ?? 1) ?? new(),
             };
             lock (p) p.Plan = plan;
@@ -451,7 +547,7 @@ public class Orchestrator
     /// parallel instances staffed by the Project Manager.
     private bool CanDelegate(Project p, AgentDef def)
     {
-        if (def.MaxInstances < 2) return false;
+        if (def.MaxInstances < 2 || UsesTools(def)) return false;   // helpers would write the same files at once
         var staffed = def.Spawnable && p.Plan?.Instances.TryGetValue(def.Id, out var n) == true ? Math.Clamp(n, 1, def.MaxInstances) : 1;
         return staffed == 1;
     }
@@ -463,8 +559,27 @@ public class Orchestrator
         sb.Append("Work only from the brief and the prior work you are given; state assumptions instead of inventing customer facts.\n");
         sb.Append("Write your deliverable in English as a Markdown document. End your reply with one fenced json block:\n");
         sb.Append("```json\n{\"status\": \"done | need_info | blocked\", \"summary\": \"<one sentence for the team>\", \"open_questions\": [], \"data\": {}}\n```\n");
-        sb.Append($"LENGTH: stay under about {TargetWords(def):N0} words in total. Be dense: tables and short bullets, no repetition, no restating the brief or other teams' documents. ");
-        sb.Append("For code, give the key files and the non-obvious logic only, not boilerplate. The final json block is mandatory, so leave room for it.");
+        if (Code)
+            sb.Append($"TARGET STACK (mandatory for every design and line of code): {_reg.Config.CodeMode.Stack}. One ASP.NET Core project, App.csproj, " +
+                      "started with `dotnet run`; SQLite file database through EF Core; plain HTML/CSS/JavaScript pages in wwwroot (no npm or front-end build step). " +
+                      "No Docker, no cloud services. External systems (WhatsApp, email, payment, SSO) sit behind an interface with a fake implementation that logs what it would send, " +
+                      "plus a simple sign-in with seeded demo users per role.\n");
+        if (UsesTools(def))
+        {
+            sb.Append("WORKSPACE: your current folder IS the application's source folder (it contains App.csproj). Use your tools to create and edit real files there; " +
+                      "read the existing files first and build on them, do not start over. Never touch anything outside this folder. " +
+                      "Before you finish, run `dotnet build` and fix every error. ");
+            if (def.Id == "qa")
+                sb.Append($"TESTING: build, then start the app in the background with `dotnet run --no-build --urls http://localhost:{TestPort} & PID=$!`, wait until it answers, " +
+                          "check the acceptance criteria with curl against the running app (pages and API), then `kill $PID`. Report each defect with the exact request and what came back; " +
+                          "put {\"bugs\": n, \"defects\": [...]} in the handoff data. ");
+            sb.Append("Your final reply is a short report (at most about 300 words): what you built or changed, which files, how to try it, known gaps. End with the json block.");
+        }
+        else
+        {
+            sb.Append($"LENGTH: stay under about {TargetWords(def):N0} words in total. Be dense: tables and short bullets, no repetition, no restating the brief or other teams' documents. ");
+            sb.Append("For code, give the key files and the non-obvious logic only, not boilerplate. The final json block is mandatory, so leave room for it.");
+        }
         if (canDelegate)
             sb.Append($"\n\nSPLITTING WORK: if this task is clearly too large to do well in one reply, you may hand parts to up to {def.MaxInstances - 1} helpers " +
                       "who have your role and your model. Then reply with ONLY the json block: " +
@@ -575,6 +690,11 @@ public class Orchestrator
         sb.AppendLine($"PROJECT: {p.Title} ({p.Id})");
         sb.AppendLine($"STAGE: {st.Title}");
         if (module != null) sb.AppendLine($"ASSIGNED MODULE: {module}");
+        if (UsesTools(def))
+        {
+            sb.AppendLine("APP FOLDER: your current directory (App.csproj). Files now: " + AppFileList(p));
+            if (def.Id == "qa") sb.AppendLine($"TEST URL: http://localhost:{TestPort}");
+        }
         if (round > 1) sb.AppendLine($"ROUND {round}");
         if (!string.IsNullOrWhiteSpace(note)) sb.AppendLine("NOTE FROM REVIEW:\n" + note);
         if (answers != null) sb.AppendLine("CUSTOMER ANSWERS:\n" + answers);
@@ -654,17 +774,23 @@ public class Orchestrator
     private async Task EnforceBudgetAsync(Project p, StageDef st, CancellationToken ct)
     {
         var step = _reg.Config.Budget.MaxTokensPerProject;
-        bool Over() => step > 0 && p.TokensIn + p.TokensOut >= step + p.ExtraBudget;
-        if (!Over()) return;
+        var usdStep = _reg.Config.Budget.MaxUsdPerProject;
+        bool OverTokens() => step > 0 && p.TokensIn + p.TokensOut >= step + p.ExtraBudget;
+        bool OverUsd() => usdStep > 0 && p.Cost >= usdStep + p.ExtraUsd;
+        if (!OverTokens() && !OverUsd()) return;
         var rt = Rt(p);
         await rt.BudgetLock.WaitAsync(ct);
         try
         {
-            if (!Over()) return;   // another agent's gate was already approved
+            if (!OverTokens() && !OverUsd()) return;   // another agent's gate was already approved
             var used = p.TokensIn + p.TokensOut;
-            var d = await GateAsync(p, st, "budget", $"Token budget reached ({used:N0} of {step + p.ExtraBudget:N0}, ${p.Cost:N2} so far). Approve to allow {step:N0} more tokens.", ct);
-            if (d.Decision != "approve") { Stop(p, "Stopped at the token budget."); throw new OperationCanceledException(); }
-            p.ExtraBudget = used;   // next stop: one more budget step from current usage
+            var label = OverUsd()
+                ? $"Dollar budget reached (${p.Cost:N2} of ${usdStep + p.ExtraUsd:N2}). Approve to allow ${usdStep:N2} more."
+                : $"Token budget reached ({used:N0} of {step + p.ExtraBudget:N0}, ${p.Cost:N2} so far). Approve to allow {step:N0} more tokens.";
+            var d = await GateAsync(p, st, "budget", label, ct);
+            if (d.Decision != "approve") { Stop(p, "Stopped at the budget."); throw new OperationCanceledException(); }
+            p.ExtraBudget = used;      // next stop: one more step from current usage
+            p.ExtraUsd = p.Cost;
         }
         finally { rt.BudgetLock.Release(); }
     }
@@ -684,8 +810,13 @@ public class Orchestrator
     private async Task<(LlmResult, ResolvedModel)> CallAsync(Project p, AgentDef def, string stageId, string system, List<(string, string)> messages, CancellationToken ct)
     {
         var model = _reg.ResolveModel(def.Id, p.ModelOverrides);
-        var req = new LlmRequest(def.Id, model.Model, _reg.ResolveEffort(def.Id), OutputLimit(def), system, messages);
+        var tools = stageId != "chat" && UsesTools(def);
+        var cm = _reg.Config.CodeMode;
+        var req = new LlmRequest(def.Id, model.Model, _reg.ResolveEffort(def.Id), OutputLimit(def), system, messages,
+            Tools: tools ? def.Tools : null, Cwd: tools ? _app.Dir(p) : null, MaxTurns: tools ? cm.MaxTurns : 1, MaxBudgetUsd: tools ? cm.MaxCallUsd : null);
         var res = await _llm.CompleteAsync(req, p, ct);
+        if (res.StopReason.StartsWith("error_max"))
+            _store.Publish(p, "log", new { level = "warn", text = $"{def.Role} stopped early ({(res.StopReason == "error_max_turns" ? $"{cm.MaxTurns} steps" : $"${cm.MaxCallUsd} per call")}); its part may be incomplete." });
         return (res, model);
     }
 
@@ -757,6 +888,18 @@ public class Orchestrator
         {
             return new Handoff { Status = "done", Summary = FirstLine(text) };
         }
+    }
+
+    /// The PM may list modules as plain names or as objects like {"id": "M2", "name": "Import and Parser", "stories": [...]}.
+    private static string ModuleName(JsonNode? x)
+    {
+        if (x is JsonObject o)
+        {
+            var name = (o["name"] ?? o["title"])?.ToString() ?? "";
+            var id = o["id"]?.ToString();
+            return string.IsNullOrWhiteSpace(id) ? name : $"{id} {name}".Trim();
+        }
+        return x?.ToString() ?? "";
     }
 
     private static string FirstLine(string text) =>

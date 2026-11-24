@@ -225,7 +225,9 @@ dialog.viewer header h3 { margin: 0; flex: 1; font: 700 15px/1.2 var(--f-display
 .owner.waiting .owner-title, .owner.waiting .owner-sub { fill: #fff; }
 .owner.waiting .owner-ripple { animation: ownerRipple 1.6s ease-out infinite; }
 .owner.approved .owner-card { fill: var(--ok); stroke: var(--ok); }
-.node { cursor: default; animation: pop .6s cubic-bezier(.2,1.5,.4,1) both; animation-delay: calc(var(--i, 0) * 30ms); transform-box: fill-box; transform-origin: center; }
+.node { cursor: default; transform-box: fill-box; transform-origin: center; }
+svg.intro .node { animation: pop .6s cubic-bezier(.2,1.5,.4,1) both; animation-delay: calc(var(--i, 0) * 30ms); }
+.node.spawned { animation: pop .55s cubic-bezier(.2,1.5,.4,1) both; }
 .node .card { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; transition: stroke .3s, fill .2s; }
 .node[role="button"] { cursor: pointer; outline: none; }
 .node[role="button"]:hover .card, .node[role="button"]:focus-visible .card { fill: color-mix(in srgb, var(--dc) 8%, var(--surface)); stroke: var(--dc); stroke-width: 1.8; }

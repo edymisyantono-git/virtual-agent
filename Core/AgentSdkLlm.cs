@@ -13,6 +13,7 @@ public class AgentSdkLlm : ILlmClient, IDisposable
     private Process? _runner;
 
     public bool IsLive => true;
+    public bool SupportsTools => true;
 
     public AgentSdkLlm(string runnerDir, int port = 5081)
     {
@@ -33,6 +34,13 @@ public class AgentSdkLlm : ILlmClient, IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true,
+            // Agents run `dotnet build`; put the SDK this server runs on first, ahead of an SDK-less dotnet on PATH.
+            Environment =
+            {
+                ["PATH"] = Path.GetDirectoryName(AppWorkspace.Dotnet) is { Length: > 0 } sdkDir ? sdkDir + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH") : Environment.GetEnvironmentVariable("PATH"),
+                ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1",
+                ["DOTNET_NOLOGO"] = "1",
+            },
         });
         if (_runner == null) throw new InvalidOperationException("Could not start node. Is Node.js installed and on PATH?");
         _runner.OutputDataReceived += (_, e) => { if (e.Data != null) log.LogInformation("[runner] {Line}", e.Data); };
@@ -55,7 +63,8 @@ public class AgentSdkLlm : ILlmClient, IDisposable
 
     public async Task<LlmResult> CompleteAsync(LlmRequest req, Project project, CancellationToken ct)
     {
-        var job = new { agentId = req.AgentId, model = req.Model, effort = req.Effort, maxOutputTokens = req.MaxTokens, system = req.System, prompt = Flatten(req.Messages) };
+        var job = new { agentId = req.AgentId, model = req.Model, effort = req.Effort, maxOutputTokens = req.MaxTokens, system = req.System, prompt = Flatten(req.Messages),
+            tools = req.Tools, cwd = req.Cwd, maxTurns = req.MaxTurns, maxBudgetUsd = req.MaxBudgetUsd };
         var res = await _http.PostAsJsonAsync("/run", job, ct);
         var body = await res.Content.ReadFromJsonAsync<RunnerResult>(cancellationToken: ct)
                    ?? throw new InvalidOperationException("Empty answer from the agent runner.");

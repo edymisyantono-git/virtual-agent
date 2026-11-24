@@ -26,6 +26,7 @@ ILlmClient llm = engine switch
 builder.Services.AddSingleton(registry);
 builder.Services.AddSingleton(store);
 builder.Services.AddSingleton(llm);
+builder.Services.AddSingleton<AppWorkspace>();
 builder.Services.AddSingleton<Orchestrator>();
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
@@ -138,9 +139,27 @@ app.MapGet("/api/projects", () => Results.Ok(store.All.Select(Summary)));
 
 app.MapPost("/api/projects", (Orchestrator orc, NewProject n) => Results.Ok(Summary(orc.StartProject(n.AutoApprove))));
 
-app.MapGet("/api/projects/{id}", (string id) => store.Get(id) is { } p
-    ? Results.Ok(new { p.Id, p.Title, status = p.Status.ToString(), p.Brief, p.ModelOverrides, p.AutoApprove, p.Artifacts, p.Runs, p.PendingGate, p.PendingQuestion, p.Plan, p.TokensIn, p.TokensOut, p.Cost })
+app.MapGet("/api/projects/{id}", (string id, AppWorkspace ws) => store.Get(id) is { } p
+    ? Results.Ok(new { p.Id, p.Title, status = p.Status.ToString(), p.Brief, p.ModelOverrides, p.AutoApprove, p.Artifacts, p.Runs, p.PendingGate, p.PendingQuestion, p.Plan, p.TokensIn, p.TokensOut, p.Cost,
+        appExists = ws.Exists(p), appUrl = ws.IsRunning(p) ? p.AppUrl : null })
     : Results.NotFound());
+
+app.MapPost("/api/projects/{id}/app/start", async (string id, Orchestrator orc, AppWorkspace ws) =>
+{
+    var p = store.Get(id);
+    if (p == null) return Results.NotFound();
+    if (!ws.Exists(p)) return Results.Conflict(new { error = "This project has no app yet. Code mode builds one during the Build stage." });
+    try { return Results.Ok(new { url = await orc.StartAppAsync(p) }); }
+    catch (InvalidOperationException ex) { return Results.Problem(ex.Message); }
+});
+
+app.MapPost("/api/projects/{id}/app/stop", (string id, Orchestrator orc) =>
+{
+    var p = store.Get(id);
+    if (p == null) return Results.NotFound();
+    orc.StopApp(p);
+    return Results.Ok();
+});
 
 app.MapGet("/api/projects/{id}/events", async (string id, HttpContext ctx) =>
 {
@@ -226,7 +245,7 @@ app.MapPost("/api/projects/{id}/stop", (string id, Orchestrator orc) =>
     return Results.Ok();
 });
 
-app.MapGet("/api/projects/{id}/export", (string id) =>
+app.MapGet("/api/projects/{id}/export", (string id, AppWorkspace ws) =>
 {
     var p = store.Get(id);
     if (p == null) return Results.NotFound();
@@ -241,6 +260,18 @@ app.MapGet("/api/projects/{id}/export", (string id) =>
             var path = (a.Helper ? "parts/" : "") + a.Name;
             using (var w = new StreamWriter(zip.CreateEntry(path).Open())) w.Write(text);
             index.AppendLine($"- [{a.Title}]({path})");
+        }
+        // Code mode: the application's source, without build output or the local database.
+        var appDir = ws.Dir(p);
+        if (ws.Exists(p))
+        {
+            index.AppendLine("\n## Application source\n\nFolder `app/`. Run it with `dotnet run` inside that folder.");
+            foreach (var f in Directory.EnumerateFiles(appDir, "*", SearchOption.AllDirectories))
+            {
+                var rel = Path.GetRelativePath(appDir, f).Replace('\\', '/');
+                if (rel.StartsWith("bin/") || rel.StartsWith("obj/") || rel.EndsWith(".db") || rel.EndsWith(".db-shm") || rel.EndsWith(".db-wal")) continue;
+                System.IO.Compression.ZipFileExtensions.CreateEntryFromFile(zip, f, "app/" + rel);
+            }
         }
         using (var w = new StreamWriter(zip.CreateEntry("INDEX.md").Open())) w.Write(index.ToString());
     }
