@@ -26,7 +26,12 @@ public class DefaultsDef
     public int MaxOutputTokens { get; set; } = 8000;
     /// Language of the whole app: the UI, messages from the team, and the documents agents write. "en" or "id".
     public string Language { get; set; } = "en";
+    /// Fallback USD → IDR rate when the live rate cannot be fetched (0 = none: agents are told no rate is known).
+    public decimal FxIdrPerUsd { get; set; }
 }
+
+/// An exchange rate locked into a project: rupiah per US dollar, the rate's own date, where it came from, when locked.
+public record FxRate(decimal IdrPerUsd, string Date, string Source, DateTime LockedAt);
 
 public class ModelDef
 {
@@ -163,6 +168,8 @@ public class Project
     public List<string> RefusedHosts { get; set; } = new();
     /// Every reference file the customer attached in the chat, oldest first (all agents get them).
     public List<ChatAttachment> Attachments { get; set; } = new();
+    /// The USD → IDR rate locked when the budget was given (the start of the pipeline); every agent uses this one.
+    public FxRate? Fx { get; set; }
     public ProjectPlan? Plan { get; set; }
     /// Tokens added on top of budget.maxTokensPerProject each time you approve the budget gate.
     public long ExtraBudget { get; set; }

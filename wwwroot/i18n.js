@@ -214,7 +214,7 @@
     "The release package is ready.": "Paket rilis sudah siap.",
     // pause
     "Pause": "Jeda", "Continue": "Teruskan", "Paused": "Dijeda",
-    "Agents at work finish their step; nothing new starts": "Agent yang sedang bekerja menyelesaikan langkahnya; tidak ada yang baru dimulai",
+    "Agents stop at their next action and wait until you press Continue": "Agent berhenti di aksi berikutnya dan menunggu sampai Anda menekan Teruskan",
     "Cancels the agents at work": "Membatalkan agent yang sedang bekerja",
     // minimize / restore panels
     "Show the chat": "Tampilkan chat", "Minimize the chat": "Minimalkan chat",

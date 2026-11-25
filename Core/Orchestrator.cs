@@ -42,10 +42,42 @@ public class Orchestrator
     private readonly AppWorkspace _app;
     private readonly Handover _handover;
 
-    public Orchestrator(AgentRegistry reg, ProjectStore store, ILlmClient llm, AppWorkspace app, Handover handover, ILogger<Orchestrator> log)
+    private readonly FxRates _fx;
+
+    public Orchestrator(AgentRegistry reg, ProjectStore store, ILlmClient llm, AppWorkspace app, Handover handover, FxRates fx, ILogger<Orchestrator> log)
     {
-        _reg = reg; _store = store; _llm = llm; _app = app; _handover = handover; _log = log;
+        _reg = reg; _store = store; _llm = llm; _app = app; _handover = handover; _fx = fx; _log = log;
     }
+
+    // ================= Exchange rate =================
+
+    /// Lock today's USD → IDR rate into the project when its budget has been given (once; a resume keeps it).
+    private async Task EnsureFxAsync(Project p, CancellationToken ct)
+    {
+        if (p.Fx != null) return;
+        var fx = await _fx.UsdIdrAsync(ct);
+        if (fx == null && _reg.Config.Defaults.FxIdrPerUsd > 0)
+            fx = new FxRate(_reg.Config.Defaults.FxIdrPerUsd, DateTime.Now.ToString("yyyy-MM-dd"), "the rate set in the Registry (the live rate could not be fetched)", DateTime.UtcNow);
+        if (fx == null)
+        {
+            _store.Publish(p, "log", new { level = "warn", text = L("The current USD/IDR exchange rate could not be fetched; agents are told not to assume one.",
+                "Kurs USD/IDR saat ini tidak bisa diambil; agent diminta tidak mengarang kurs.") });
+            return;
+        }
+        p.Fx = fx;
+        _store.Publish(p, "log", new { level = "info", text = L($"Exchange rate locked for this project: 1 USD = Rp {FxText(fx)} ({fx.Source}, {fx.Date}).",
+            $"Kurs dikunci untuk proyek ini: 1 USD = Rp {FxText(fx)} ({fx.Source}, {fx.Date}).") });
+        _store.Save(p);
+    }
+
+    private string FxText(FxRate fx) => fx.IdrPerUsd.ToString("N0", Lang == "id" ? new System.Globalization.CultureInfo("id-ID") : System.Globalization.CultureInfo.InvariantCulture);
+
+    /// One line every agent reads: the rate to use for any conversion between dollars and rupiah.
+    private string FxLine(Project p) => p.Fx is { } fx
+        ? $"EXCHANGE RATE (locked when the customer gave the budget): 1 USD = IDR {fx.IdrPerUsd:0} ({fx.Source}, rate date {fx.Date}). " +
+          "Use exactly this rate for every conversion between US dollars and rupiah, and state it where you convert; never assume another rate. " +
+          "Quote the customer in the currency of their budget.\n"
+        : "EXCHANGE RATE: not known. Do not convert between currencies with an assumed rate; keep amounts in the customer's currency.\n";
 
     public bool IsLive => _llm.IsLive;
 
@@ -149,6 +181,7 @@ public class Orchestrator
         sb.AppendLine($"Project: {p.Title} ({p.Id}). Status: {p.Status}.");
         sb.AppendLine(StatusReport(p));
         sb.AppendLine("Customer brief: " + string.Join("; ", Slots.Select(k => $"{k}: {p.Brief.GetValueOrDefault(k, "(unknown)")}")));
+        sb.Append(FxLine(p));
         List<ArtifactRef> docs; List<AgentRun> runs;
         lock (p) { docs = p.Artifacts.Where(a => !a.Helper).ToList(); runs = p.Runs.ToList(); }
         sb.AppendLine($"DOCUMENTS ({docs.Count}, newest last):");
@@ -333,6 +366,7 @@ public class Orchestrator
         try
         {
             SetStatus(p, ProjectStatus.Running);
+            await EnsureFxAsync(p, ct);                                               // the budget is in: lock today's rate
             var stages = _reg.Config.Pipeline;
             StageDef? prev = null;
             for (var i = 0; i < stages.Count; i++)
@@ -1084,6 +1118,7 @@ public class Orchestrator
         if (answers != null) sb.AppendLine("CUSTOMER ANSWERS:\n" + answers);
         sb.AppendLine("\nCUSTOMER BRIEF:");
         foreach (var k in Slots) sb.AppendLine($"- {k}: {(p.Brief.TryGetValue(k, out var v) ? v : "(unknown)")}");
+        sb.Append(FxLine(p));
         sb.Append(ReferencesBlock(p, UsesTools(def)));
 
         var docs = RelevantDocs(p, def, inst, round);

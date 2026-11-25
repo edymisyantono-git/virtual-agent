@@ -36,6 +36,7 @@ builder.Services.AddSingleton(llm);
 builder.Services.AddSingleton<AppWorkspace>();
 builder.Services.AddSingleton<Handover>();
 builder.Services.AddSingleton<ReleasePackager>();
+builder.Services.AddSingleton<FxRates>();
 builder.Services.AddSingleton<Orchestrator>();
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
