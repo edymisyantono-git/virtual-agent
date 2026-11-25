@@ -10,7 +10,7 @@
     "effort": "medium",
     "maxTokens": 16000,
     "maxOutputTokens": 8000,
-    "language": "id"
+    "language": "en"
   },
   "models": [
     {

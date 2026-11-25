@@ -523,9 +523,15 @@
   const fmtTok = n => n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + t("k") : String(n);
   const fmtClock = ms => ms ? new Date(ms).toLocaleTimeString(I18N.lang === "id" ? "id-ID" : "en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit" }) : "?";
 
+  // While an agent is held by Pause its clock stands still at its last sign of activity.
+  function liveEnd(l, now) { return liveState(l, now) === "paused" ? Math.min(now, l.lastAt || now) : now; }
+
   function liveState(l, now) {
     const idle = (now - (l.lastAt || now)) / 1000;
     if (l.phase === "paused") return "paused";                                  // held on purpose by Pause: not stuck
+    // Paused project: an agent that has produced nothing for a few seconds is held (or between steps), not working;
+    // one still streaming finishes its sentence first.
+    if (S.status === "Paused") return idle >= 3 ? "paused" : "pausing";
     if (l.phase === "rate_limited") return "limited";
     if (l.phase === "retrying") return "retrying";
     // Only an agent we get live ticks for can be judged stuck (the API engine and older servers send none).
@@ -535,8 +541,9 @@
 
   // Short text for the card (it replaces the model name while the agent works).
   function liveShort(l, now) {
-    const el = fmtDur((now - l.startedAt) / 1000), st = liveState(l, now);
+    const st = liveState(l, now), el = fmtDur((liveEnd(l, now) - l.startedAt) / 1000);
     if (st === "paused") return `⏸ ${t("paused")}`;
+    if (st === "pausing") return `⏸ ${t("finishing…")}`;
     if (st === "limited") return `⏸ ${t("limit")} ${l.rateLimit?.resetsAt ? new Date(l.rateLimit.resetsAt).toTimeString().slice(0, 5) : "?"}`;
     if (st === "retrying") return `⟳ ${t("retry {0}/{1}", l.retry?.attempt ?? "?", l.retry?.max ?? "?")}`;
     if (st === "stalled") return `⚠ ${t("silent {0}", fmtDur((now - l.lastAt) / 1000))}`;
@@ -550,6 +557,7 @@
   function liveLong(l, now) {
     const st = liveState(l, now);
     if (st === "paused") return t("Paused: waits at its next step until you press Continue.");
+    if (st === "pausing") return t("Finishing the sentence it is writing, then it pauses.");
     if (st === "limited") return t("Claude usage limit reached; resets {0}. Press Resume after that.", fmtClock(l.rateLimit?.resetsAt));
     if (st === "retrying") return t("Claude API busy ({0}); retry {1}/{2} in {3}s", l.retry?.error || "?", l.retry?.attempt ?? "?", l.retry?.max ?? "?", Math.round((l.retry?.waitMs || 0) / 1000));
     let s = l.phase === "tool" ? t("Running {0}", l.tool || t("tool")) + (l.detail ? `: ${l.detail}` : "")
@@ -574,7 +582,7 @@
     box.innerHTML = head + rows.sort((a, b) => a.startedAt - b.startedAt).map(l => {
       const a = agent(l.agentId), st = liveState(l, now), ago = Math.round((now - l.lastAt) / 1000);
       return `<div class="live-row ${st}"><span class="dot" style="background:${roleCol(l.agentId)}">${esc(a?.initials || "AI")}</span>
-        <div><div class="live-who">${esc(roleName(l.agentId))}${l.inst > 1 || (viz.extra?.[l.agentId] || 1) > 1 ? ` #${l.inst}` : ""}<span class="mono">${fmtDur((now - l.startedAt) / 1000)}</span></div>
+        <div><div class="live-who">${esc(roleName(l.agentId))}${l.inst > 1 || (viz.extra?.[l.agentId] || 1) > 1 ? ` #${l.inst}` : ""}<span class="mono">${fmtDur((liveEnd(l, now) - l.startedAt) / 1000)}</span></div>
         <div class="live-what">${esc(liveLong(l, now))}</div>
         <div class="live-meta mono">${l.tickAt ? esc(t("last sign of life {0} ago", fmtDur(ago))) : esc(t("no live progress from this engine"))}${l.tokens ? ` · ${esc(t("{0} tokens out", l.tokens.toLocaleString()))}` : ""}</div></div></div>`;
     }).join("");
