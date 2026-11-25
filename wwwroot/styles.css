@@ -180,9 +180,25 @@ select.field, input.field, textarea.field { border: 1px solid var(--line); backg
 .open-issues ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 3px; }
 
 /* stage (centre) */
-.hud { display: flex; flex-wrap: wrap; gap: 4px 20px; align-items: flex-end; padding: 10px 14px; border-bottom: 1px solid var(--line); }
-.hud .title { flex: 1 1 260px; min-width: 0; }
-.hud .title h1 { margin: 2px 0 0; font: 700 20px/1.15 var(--f-display); letter-spacing: -.015em; text-wrap: balance; overflow-wrap: anywhere; }
+/* HUD: row 1 = project title (one line) + status and its buttons; row 2 = a compact strip of numbers. */
+.hud { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "title status" "stats stats"; gap: 8px 18px; align-items: end; padding: 9px 14px 8px; border-bottom: 1px solid var(--line); }
+.hud .title { grid-area: title; min-width: 0; }
+.hud .title h1 { margin: 2px 0 0; font: 700 19px/1.2 var(--f-display); letter-spacing: -.015em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hud .title-row { min-width: 0; align-items: center; }
+.hud .title-row h1 { min-width: 0; flex: 0 1 auto; }
+.hud .modstat .pbar { margin-top: 0; }
+.hud .stat-status { grid-area: status; justify-self: end; }
+.hud .status-row { flex-wrap: nowrap; }
+.hud-stats { grid-area: stats; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 22px; padding-top: 7px; border-top: 1px dashed var(--line); }
+.hud-stats .stat { flex-direction: row; align-items: baseline; gap: 7px; }
+.hud-stats .stat b { font-size: 14.5px; }
+.hud-stats .modstat { align-items: center; }
+.hud-stats .modstat .pbar { width: 90px; }
+@media (max-width: 900px) {
+  .hud { grid-template-columns: minmax(0, 1fr); grid-template-areas: "title" "status" "stats"; }
+  .hud .stat-status { justify-self: start; }
+  .hud .status-row { flex-wrap: wrap; }
+}
 .stat { display: flex; flex-direction: column; gap: 3px; }
 .stat b { font: 600 17px/1 var(--f-mono); font-variant-numeric: tabular-nums; }
 .status-chip { display: inline-flex; align-items: center; gap: 6px; font: 600 11px/1 var(--f-mono); padding: 4px 8px; border-radius: 4px; background: var(--surface-2); border: 1px solid var(--line); }

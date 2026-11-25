@@ -76,12 +76,14 @@
   <section class="panel stage" aria-label="${t("Operations floor")}">
     <div class="hud">
       <div class="title"><div class="eyebrow" id="projId">${t("No project yet")}</div><div class="title-row"><h1 id="projTitle">${t("Start a request to staff the floor")}</h1><button class="icon-btn" id="editTitle" type="button" hidden title="${t("Edit title")}" aria-label="${t("Edit title")}"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75zM20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75z" fill="currentColor"/></svg></button></div></div>
-      <div class="stat"><span class="eyebrow">${t("Status")}</span><span class="status-row"><span class="status-chip" id="statusChip" data-s="Intake">${t("Intake")}</span><button class="btn signal sm" id="resumeBtn" type="button" hidden>${t("Resume")}</button><button class="btn sm" id="pauseBtn" type="button" hidden title="${t("Agents at work finish their step; nothing new starts")}">${t("Pause")}</button><button class="btn signal sm" id="unpauseBtn" type="button" hidden>${t("Continue")}</button><button class="btn sm" id="stopBtn" type="button" hidden title="${t("Cancels the agents at work")}">${t("Stop")}</button><a class="btn primary sm" id="openAppBtn" target="_blank" rel="noopener" hidden>${t("Open app")}</a><button class="btn sm" id="startAppBtn" type="button" hidden>${t("Start app")}</button><button class="btn sm" id="stopAppBtn" type="button" hidden>${t("Stop app")}</button></span></div>
+      <div class="stat stat-status"><span class="eyebrow">${t("Status")}</span><span class="status-row"><span class="status-chip" id="statusChip" data-s="Intake">${t("Intake")}</span><button class="btn signal sm" id="resumeBtn" type="button" hidden>${t("Resume")}</button><button class="btn sm" id="pauseBtn" type="button" hidden title="${t("Agents at work finish their step; nothing new starts")}">${t("Pause")}</button><button class="btn signal sm" id="unpauseBtn" type="button" hidden>${t("Continue")}</button><button class="btn sm" id="stopBtn" type="button" hidden title="${t("Cancels the agents at work")}">${t("Stop")}</button><a class="btn primary sm" id="openAppBtn" target="_blank" rel="noopener" hidden>${t("Open app")}</a><button class="btn sm" id="startAppBtn" type="button" hidden>${t("Start app")}</button><button class="btn sm" id="stopAppBtn" type="button" hidden>${t("Stop app")}</button></span></div>
+      <div class="hud-stats">
       <div class="stat"><span class="eyebrow">${t("Agents on it")}</span><b id="activeAgents">0</b></div>
       <div class="stat"><span class="eyebrow">${t("Tokens")}</span><b id="tokens">0</b></div>
       <div class="stat"><span class="eyebrow">${t("Cost (USD)")}</span><b id="cost">0.0000</b></div>
       <div class="stat"><span class="eyebrow">${t("Elapsed")}</span><b id="elapsed">00:00:00</b></div>
       <button class="stat modstat" id="modStat" type="button" hidden title="${t("Open the module log")}"><span class="eyebrow">${t("Modules")}</span><b id="modPct">0%</b><span class="pbar"><i id="modBar"></i></span></button>
+      </div>
     </div>
     <div class="viz-wrap"><svg id="floor" role="img" aria-label="${t("Pipeline of agents by department")}"></svg>
       <div class="floor3d" id="floor3d" hidden aria-label="${t("3D floor: drag to rotate, scroll to zoom, right-drag to pan, click an agent for its settings")}"></div>
@@ -1138,6 +1140,9 @@
     S.meta = DEMO ? window.VC_DEMO_META : await api.get("/meta");
     I18N.set(S.meta.defaults?.language || "en");
     shell();
+    // The HUD title is cut to one line; keep the full title in its tooltip.
+    const titleEl = $("#projTitle");
+    new MutationObserver(() => { titleEl.title = titleEl.textContent; }).observe(titleEl, { childList: true, characterData: true, subtree: true });
     viz = new FloorViz($("#floor"));
     // The 3D floor mirrors the 2D one; hand-offs and the go-live burst are forwarded to it.
     const send2d = viz._send.bind(viz), celebrate2d = viz.celebrate.bind(viz);
