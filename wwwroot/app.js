@@ -62,7 +62,10 @@
       <div><h2>${t("Request chat")}</h2><div class="chat-sub">${t("You and the project team")}</div></div><span class="spacer"></span><button class="icon-btn collapse-btn" type="button" data-collapse="left" title="${t("Minimize the chat")}" aria-label="${t("Minimize the chat")}">«</button></header>
     <div class="slots" id="slots"></div>
     <div class="messages" id="messages" aria-live="polite"></div>
+    <div class="attach-tray" id="attachTray" hidden></div>
     <form class="composer" id="composer">
+      <button class="attach-btn" id="attachBtn" type="button" title="${t("Attach a file or picture (you can also paste or drop it here)")}" aria-label="${t("Attach a file")}"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M16.5 6.5v10.6a4.5 4.5 0 0 1-9 0V5.8a3 3 0 0 1 6 0v10.3a1.5 1.5 0 0 1-3 0V6.5H9v9.6a3 3 0 0 0 6 0V5.8a4.5 4.5 0 0 0-9 0v11.3a6 6 0 0 0 12 0V6.5z" fill="currentColor"/></svg></button>
+      <input type="file" id="attachInput" multiple hidden>
       <textarea id="chatInput" rows="1" placeholder="${t("Type a message")}" aria-label="${t("Message")}"></textarea>
       <button class="send-btn" id="sendBtn" type="submit" title="${t("Send")}" aria-label="${t("Send")}"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3.4 20.4 21 12 3.4 3.6l-.01 6.53L15 12 3.39 13.87z" fill="currentColor"/></svg></button>
     </form>
@@ -82,10 +85,10 @@
     </div>
     <div class="viz-wrap"><svg id="floor" role="img" aria-label="${t("Pipeline of agents by department")}"></svg>
       <div class="floor3d" id="floor3d" hidden aria-label="${t("3D floor: drag to rotate, scroll to zoom, right-drag to pan, click an agent for its settings")}"></div>
-      <div class="floor3d office3d" id="office3d" hidden aria-label="${t("Office view: the agents as people at work; drag to move, scroll to zoom, click a person for their settings")}"></div>
+      <div class="floor3d office3d" id="office3d3" hidden aria-label="${t("Office view: the agents as people at work; drag to move, scroll to zoom, click a person for their settings")}"></div>
       <div class="floor3d office3d" id="office3d2" hidden aria-label="${t("Office view: the agents as people at work; drag to move, scroll to zoom, click a person for their settings")}"></div>
       <div class="view-toggle" role="group" aria-label="${t("Floor view")}">
-        <button type="button" data-floorview="2d" aria-pressed="true">2D</button><button type="button" data-floorview="3d" aria-pressed="false">3D</button><button type="button" data-floorview="office" aria-pressed="false">${t("Office")} 1</button><button type="button" data-floorview="office2" aria-pressed="false">${t("Office")} 2</button>
+        <button type="button" data-floorview="2d" aria-pressed="true">2D</button><button type="button" data-floorview="3d" aria-pressed="false">3D</button><button type="button" data-floorview="office2" aria-pressed="false" title="${t("Office with a room per department; the CEO in the front right corner")}">${t("Office")} 1</button><button type="button" data-floorview="office3" aria-pressed="false" title="${t("Open-plan office with cubicles; only the CEO has a glass room")}">${t("Office")} 2</button>
         <button type="button" id="officeHQ" hidden aria-pressed="true" title="${t("Picture quality: High (soft shading, smooth edges) or Normal (lighter for slower computers)")}">HQ</button>
         <button type="button" id="reset3d" hidden title="${t("Reset the 3D view")}" aria-label="${t("Reset the 3D view")}">⟲</button>
       </div>
@@ -270,7 +273,13 @@
     const av = mine ? "" : `<span class="av" style="background:${roleCol(m.agentId)}" title="${esc(nm(a, "role"))}">${esc(a?.initials || "AI")}</span>`;
     const who = mine || cont ? "" : `<div class="who" style="color:${roleCol(m.agentId)}">${esc(nm(a, "role") || t("Agent"))}</div>`;
     const ticks = mine ? `<svg class="ticks" viewBox="0 0 16 11" width="16" height="11" aria-label="${t("Delivered")}"><path d="M11.1.6 5.3 6.9 3 4.6 2 5.6l3.3 3.3L12.1 1.6zM15.1.6 9.3 6.9l-.7-.7-1 1L9.3 8.9 16.1 1.6z" fill="currentColor"/></svg>` : "";
-    div.innerHTML = `${av}<div class="bubble">${who}<span class="body">${chatText(m.text)}</span><span class="meta">${msgTime(at)}${ticks}</span></div>`;
+    const files = (m.attachments || []).map(f => {
+      const url = `/api/projects/${encodeURIComponent(S.id || "")}/attachments/${encodeURIComponent(f.file)}`;
+      return f.type?.startsWith("image/")
+        ? `<a class="att-img" href="${url}" target="_blank" rel="noopener" title="${esc(f.name)}"><img src="${url}" alt="${esc(f.name)}" loading="lazy"></a>`
+        : `<a class="att-file" href="${url}" target="_blank" rel="noopener"><span class="att-ic">${esc(fileExt(f.name))}</span><span><b>${esc(f.name)}</b><small>${fmtSize(f.size)}</small></span></a>`;
+    }).join("");
+    div.innerHTML = `${av}<div class="bubble">${who}${files ? `<div class="atts">${files}</div>` : ""}${m.text ? `<span class="body">${chatText(m.text)}</span>` : ""}<span class="meta">${msgTime(at)}${ticks}</span></div>`;
     $("#messages").appendChild(div);
     $("#messages").scrollTop = $("#messages").scrollHeight;
   }
@@ -516,6 +525,7 @@
 
   function liveState(l, now) {
     const idle = (now - (l.lastAt || now)) / 1000;
+    if (l.phase === "paused") return "paused";                                  // held on purpose by Pause: not stuck
     if (l.phase === "rate_limited") return "limited";
     if (l.phase === "retrying") return "retrying";
     // Only an agent we get live ticks for can be judged stuck (the API engine and older servers send none).
@@ -526,6 +536,7 @@
   // Short text for the card (it replaces the model name while the agent works).
   function liveShort(l, now) {
     const el = fmtDur((now - l.startedAt) / 1000), st = liveState(l, now);
+    if (st === "paused") return `⏸ ${t("paused")}`;
     if (st === "limited") return `⏸ ${t("limit")} ${l.rateLimit?.resetsAt ? new Date(l.rateLimit.resetsAt).toTimeString().slice(0, 5) : "?"}`;
     if (st === "retrying") return `⟳ ${t("retry {0}/{1}", l.retry?.attempt ?? "?", l.retry?.max ?? "?")}`;
     if (st === "stalled") return `⚠ ${t("silent {0}", fmtDur((now - l.lastAt) / 1000))}`;
@@ -538,6 +549,7 @@
   // Full sentence for the "Working now" panel.
   function liveLong(l, now) {
     const st = liveState(l, now);
+    if (st === "paused") return t("Paused: waits at its next step until you press Continue.");
     if (st === "limited") return t("Claude usage limit reached; resets {0}. Press Resume after that.", fmtClock(l.rateLimit?.resetsAt));
     if (st === "retrying") return t("Claude API busy ({0}); retry {1}/{2} in {3}s", l.retry?.error || "?", l.retry?.attempt ?? "?", l.retry?.max ?? "?", Math.round((l.retry?.waitMs || 0) / 1000));
     let s = l.phase === "tool" ? t("Running {0}", l.tool || t("tool")) + (l.detail ? `: ${l.detail}` : "")
@@ -677,11 +689,71 @@
   }
 
   async function send() {
-    const box = $("#chatInput"); const text = box.value.trim(); if (!text || !S.id) return;
+    const box = $("#chatInput"); const text = box.value.trim();
+    const pending = S.pendingFiles || [];
+    if ((!text && !pending.length) || !S.id || S.sending) return;
+    S.sending = true; $("#sendBtn").disabled = true;
     box.value = "";
-    if (S.status === "Intake") showTyping("intake");
-    try { await api.send("POST", `/projects/${S.id}/chat`, { text }); }
+    try {
+      let attachments = [];
+      if (pending.length) {
+        const fd = new FormData();
+        for (const f of pending) fd.append("files", f.file, f.name);
+        const r = await fetch(`/api/projects/${S.id}/attachments`, { method: "POST", body: fd });
+        if (!r.ok) throw new Error(await errText(r));
+        attachments = (await r.json()).map(x => x.file);
+        clearPending();
+      }
+      if (S.status === "Intake") showTyping("intake");
+      await api.send("POST", `/projects/${S.id}/chat`, { text, attachments });
+    }
     catch (e) { hideTyping(); toast(e.message); box.value = text; }
+    finally { S.sending = false; $("#sendBtn").disabled = false; }
+  }
+
+  // ---------------- attachments: paste, drop or pick files as references for the team ----------------
+  const MAX_FILE = 20 * 1024 * 1024;
+  function fileExt(n) { return (String(n).split(".").pop() || "file").slice(0, 4).toUpperCase(); }
+  function fmtSize(b) { return b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB"; }
+  function addPending(list) {
+    S.pendingFiles ||= [];
+    for (const file of list) {
+      if (file.size > MAX_FILE) { toast(t("{0} is larger than 20 MB.", file.name)); continue; }
+      // a pasted screenshot has no useful name: give it one with the time
+      const name = file.name && file.name !== "image.png" ? file.name
+        : `screenshot-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.${(file.type.split("/")[1] || "png").replace("jpeg", "jpg")}`;
+      S.pendingFiles.push({ file, name, url: file.type.startsWith("image/") ? URL.createObjectURL(file) : null });
+    }
+    renderPending();
+  }
+  function clearPending() { for (const f of S.pendingFiles || []) if (f.url) URL.revokeObjectURL(f.url); S.pendingFiles = []; renderPending(); }
+  function renderPending() {
+    const tray = $("#attachTray"), list = S.pendingFiles || [];
+    tray.hidden = list.length === 0;
+    tray.innerHTML = list.map((f, i) => `<div class="att-chip">${f.url ? `<img src="${f.url}" alt="">` : `<span class="att-ic">${esc(fileExt(f.name))}</span>`}
+      <span class="att-name" title="${esc(f.name)}">${esc(f.name)}<small>${fmtSize(f.file.size)}</small></span>
+      <button type="button" data-rm="${i}" title="${t("Remove")}" aria-label="${t("Remove")} ${esc(f.name)}">×</button></div>`).join("");
+    tray.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => {
+      const [f] = S.pendingFiles.splice(+b.dataset.rm, 1); if (f?.url) URL.revokeObjectURL(f.url); renderPending();
+    });
+  }
+  function initAttachments() {
+    $("#attachBtn").onclick = () => $("#attachInput").click();
+    $("#attachInput").onchange = e => { addPending([...e.target.files]); e.target.value = ""; };
+    // paste a screenshot (or copied files) straight into the message box
+    $("#chatInput").addEventListener("paste", e => {
+      const files = [...(e.clipboardData?.files || [])];
+      if (files.length) { e.preventDefault(); addPending(files); }
+    });
+    // drop files anywhere on the chat panel
+    const panel = $("#composer").closest("section") || $("#composer");
+    panel.addEventListener("dragover", e => { if ([...(e.dataTransfer?.types || [])].includes("Files")) { e.preventDefault(); panel.classList.add("drop-on"); } });
+    panel.addEventListener("dragleave", e => { if (!panel.contains(e.relatedTarget)) panel.classList.remove("drop-on"); });
+    panel.addEventListener("drop", e => {
+      panel.classList.remove("drop-on");
+      const files = [...(e.dataTransfer?.files || [])];
+      if (files.length) { e.preventDefault(); addPending(files); }
+    });
   }
 
   // ---------------- demo replay ----------------
@@ -791,22 +863,22 @@
   // ---------------- 2D / 3D floor switch (remembered per browser) ----------------
   function initFloorView() {
     const KEY = "vc.floorView";
-    let mode = "2d";
-    try { const v = localStorage.getItem(KEY); mode = ["3d", "office", "office2"].includes(v) ? v : "2d"; } catch { /* default */ }
+    let mode = "2d";   // a saved "office" (the old Office 1, now removed) opens the room office instead
+    try { const v = localStorage.getItem(KEY); mode = v === "office" ? "office2" : ["3d", "office2", "office3"].includes(v) ? v : "2d"; } catch { /* default */ }
     const set = m => {
       mode = m;
       try { localStorage.setItem(KEY, m); } catch { /* not persisted */ }
       document.querySelectorAll("[data-floorview]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.floorview === m)));
-      const is3d = m === "3d", isOffice = m === "office" || m === "office2", any = is3d || isOffice;
+      const is3d = m === "3d", isOffice = m === "office2" || m === "office3", any = is3d || isOffice;
       $(".viz-wrap").classList.toggle("is3d", is3d);
       $(".viz-wrap").classList.toggle("isoffice", isOffice);
-      $("#floor3d").hidden = !is3d; $("#office3d").hidden = m !== "office"; $("#office3d2").hidden = m !== "office2";
+      $("#floor3d").hidden = !is3d; $("#office3d2").hidden = m !== "office2"; $("#office3d3").hidden = m !== "office3";
       $("#reset3d").hidden = !any; $("#hint3d").hidden = !any; $("#officeHQ").hidden = !isOffice;
       $("#hint3d").textContent = isOffice ? t("Drag to move · scroll to zoom · click a person") : t("Drag to rotate · scroll to zoom · right-drag to pan · click an agent");
       if (!any) return;
       const [Cls, ev, slot, box, glob, opts] = is3d ? ["Floor3D", "floor3d-ready", "f3", "#floor3d", "vcFloor3D"]
         : m === "office2" ? ["OfficeView", "office-ready", "office2", "#office3d2", "vcOffice2", { layout: "rect", quality: officeQuality() }]   // one rectangle, CEO front right
-        : ["OfficeView", "office-ready", "office", "#office3d", "vcOffice", { layout: "bands", quality: officeQuality() }];
+        : ["OfficeView", "office-ready", "office3", "#office3d3", "vcOffice3", { layout: "cubicle", quality: officeQuality() }];   // open plan, cubicles
       const start = () => {
         if (S[slot] || !window[Cls]) return;
         try { S[slot] = new window[Cls]($(box), viz, opts); window[glob] = S[slot]; }
@@ -823,10 +895,10 @@
     $("#officeHQ").onclick = () => {
       const q = officeQuality() === "high" ? "normal" : "high";
       try { localStorage.setItem("vc.officeQuality", q); } catch { /* not persisted */ }
-      S.office?.setQuality(q); S.office2?.setQuality(q); showQ();
+      S.office2?.setQuality(q); S.office3?.setQuality(q); showQ();
     };
     showQ();
-    $("#reset3d").onclick = () => ({ office: S.office, office2: S.office2 }[mode] || S.f3)?.resetView();
+    $("#reset3d").onclick = () => ({ office2: S.office2, office3: S.office3 }[mode] || S.f3)?.resetView();
     set(mode);
   }
 
@@ -973,6 +1045,7 @@
     $("#adForm").onsubmit = saveAgentSettings;
     $("#adOpenReg").onclick = () => { $("#agentDlg").close(); document.querySelector('.tabs button[data-view="registry"]').click(); };
     $("#composer").onsubmit = e => { e.preventDefault(); send(); };
+    initAttachments();
     $("#chatInput").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
     // The message box grows with the text, like WhatsApp, up to about six lines.
     $("#chatInput").addEventListener("input", e => { const b = e.target; b.style.height = "auto"; b.style.height = Math.min(b.scrollHeight, 132) + "px"; });
@@ -1060,8 +1133,8 @@
     viz = new FloorViz($("#floor"));
     // The 3D floor mirrors the 2D one; hand-offs and the go-live burst are forwarded to it.
     const send2d = viz._send.bind(viz), celebrate2d = viz.celebrate.bind(viz);
-    viz._send = (a, b, kind, dur) => { send2d(a, b, kind, dur); if (!viz.quiet) { S.f3?.pulse(a, b, kind); S.office?.pulse(a, b, kind); S.office2?.pulse(a, b, kind); } };
-    viz.celebrate = () => { celebrate2d(); S.f3?.celebrate(); S.office?.celebrate(); S.office2?.celebrate(); };
+    viz._send = (a, b, kind, dur) => { send2d(a, b, kind, dur); if (!viz.quiet) { S.f3?.pulse(a, b, kind); S.office2?.pulse(a, b, kind); S.office3?.pulse(a, b, kind); } };
+    viz.celebrate = () => { celebrate2d(); S.f3?.celebrate(); S.office2?.celebrate(); S.office3?.celebrate(); };
     $("#company").textContent = S.meta.company;
     const mode = $("#mode");
     if (DEMO) { mode.className = "pill sim"; mode.textContent = t("RECORDED RUN"); }

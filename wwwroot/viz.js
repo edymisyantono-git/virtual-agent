@@ -316,7 +316,7 @@
     setLive(agentId, instance, text, state) {
       const n = (instance > 1 && this.nodes[`${agentId}#${instance}`]) || this.nodes[agentId];
       if (!n) return;
-      for (const c of ["stalled", "retrying", "limited"]) n.g.classList.toggle(c, c === state);
+      for (const c of ["stalled", "retrying", "limited", "paused"]) n.g.classList.toggle(c, c === state);
       if (text == null) {
         if (n.live) { n.live = false; n.g.classList.remove("live"); this._model(n, n.def.resolvedModel, n.def.modelSource); }
         return;

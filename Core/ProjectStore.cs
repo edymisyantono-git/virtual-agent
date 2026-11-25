@@ -71,6 +71,8 @@ public class ProjectStore
     }
 
     public string AppDir(Project p) => Path.Combine(_root, p.Id, "app");
+    /// Reference files the customer attached in the chat.
+    public string RefsDir(Project p) => Path.Combine(_root, p.Id, "refs");
 
     public string ArtifactPath(Project p, string name) => Path.Combine(_root, p.Id, "artifacts", Path.GetFileName(name));
 

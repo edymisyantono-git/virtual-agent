@@ -61,6 +61,7 @@ public class ReleasePackager
             if (!pub.Ok) throw new InvalidOperationException(L("The release build failed:\n", "Build rilis gagal:\n") + AppWorkspace.Tail(pub.Output, 20));
             foreach (var junk in Directory.EnumerateFiles(appOut, "*.db*", SearchOption.TopDirectoryOnly)) File.Delete(junk);   // the client starts with a fresh database
             var qa = Path.Combine(appOut, ".qa"); if (Directory.Exists(qa)) Directory.Delete(qa, true);
+            var refs = Path.Combine(appOut, ".refs"); if (Directory.Exists(refs)) Directory.Delete(refs, true);
 
             // 2. A private .NET runtime, copied from the one this server runs on (MIT-licensed, redistributable).
             var rtVersion = CopyRuntime(Path.Combine(pkg, "runtime"));

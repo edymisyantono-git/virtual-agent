@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using VirtualCompany.Core;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -44,7 +45,11 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 
 var app = builder.Build();
 app.UseDefaultFiles();
-app.UseStaticFiles();
+// The UI changes often: the browser must ask each time (a quick 304 when nothing changed) instead of using an old copy.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = c => c.Context.Response.Headers.CacheControl = "no-cache"
+});
 app.Logger.LogInformation("Virtual Company engine: {Engine} (auth: {Auth})", engine, auth ?? "none");
 if (llm is AgentSdkLlm sdk)
 {
@@ -87,6 +92,16 @@ app.MapGet("/api/meta", () => Results.Ok(Meta()));
 
 // One language for the whole app: the UI, the team's messages and the documents agents write.
 string L(string en, string id) => registry.Config.Defaults.Language == "id" ? id : en;
+// media type of a reference file, by its extension
+static string RefType(string f) => Path.GetExtension(f).ToLowerInvariant() switch
+{
+    ".png" => "image/png", ".jpg" or ".jpeg" => "image/jpeg", ".gif" => "image/gif", ".webp" => "image/webp", ".svg" => "image/svg+xml",
+    ".pdf" => "application/pdf", ".json" => "application/json", ".xml" => "application/xml", ".zip" => "application/zip",
+    ".md" or ".txt" or ".csv" or ".log" or ".yaml" or ".yml" or ".sql" or ".cs" or ".py" or ".ts" => "text/plain", ".html" => "text/html", ".css" => "text/css", ".js" => "text/javascript",
+    ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    _ => "application/octet-stream",
+};
 
 app.MapPut("/api/settings", (SettingsPatch s) =>
 {
@@ -321,13 +336,53 @@ app.MapPost("/api/projects/{id}/chat", async (string id, ChatIn m, Orchestrator 
 {
     var p = store.Get(id);
     if (p == null) return Results.NotFound();
-    if (string.IsNullOrWhiteSpace(m.Text)) return Results.BadRequest(new { error = L("Write a message first.", "Tulis pesan dulu.") });
-    try { await orc.CustomerMessageAsync(p, m.Text.Trim()); }
+    // attachments: files uploaded first through /attachments, referred to by their stored names
+    var files = new List<ChatAttachment>();
+    foreach (var f in m.Attachments ?? [])
+    {
+        var path = Path.Combine(store.RefsDir(p), Path.GetFileName(f));
+        if (!File.Exists(path)) continue;
+        files.Add(new ChatAttachment { File = Path.GetFileName(f), Name = Regex.Replace(Path.GetFileName(f), @"^\d+-", ""), Type = RefType(f), Size = new FileInfo(path).Length });
+    }
+    if (string.IsNullOrWhiteSpace(m.Text) && files.Count == 0) return Results.BadRequest(new { error = L("Write a message first.", "Tulis pesan dulu.") });
+    try { await orc.CustomerMessageAsync(p, (m.Text ?? "").Trim(), files); }
     catch (Exception ex) when (ex is not OperationCanceledException)
     {
         return Results.Problem(L($"The intake agent could not answer: {ex.Message}", $"Agent penerima kebutuhan tidak bisa menjawab: {ex.Message}"));
     }
     return Results.Ok();
+});
+
+// Reference files for the chat (pasted screenshots, documents): stored with the project, sent with the next message.
+app.MapPost("/api/projects/{id}/attachments", async (string id, HttpRequest req) =>
+{
+    var p = store.Get(id);
+    if (p == null) return Results.NotFound();
+    if (!req.HasFormContentType) return Results.BadRequest(new { error = "multipart/form-data expected" });
+    var form = await req.ReadFormAsync();
+    var dir = store.RefsDir(p); Directory.CreateDirectory(dir);
+    var outList = new List<object>();
+    foreach (var f in form.Files)
+    {
+        if (f.Length == 0) continue;
+        if (f.Length > 20_000_000) return Results.BadRequest(new { error = L($"{f.FileName} is larger than 20 MB.", $"{f.FileName} lebih besar dari 20 MB.") });
+        var safe = Regex.Replace(Path.GetFileName(f.FileName), @"[^\w.\- ]", "_").Trim();
+        if (safe.Length == 0 || safe.StartsWith('.')) safe = "file" + safe;
+        var n = Directory.GetFiles(dir).Length + 1;
+        var stored = $"{n:D2}-{safe}";
+        while (File.Exists(Path.Combine(dir, stored))) stored = $"{++n:D2}-{safe}";
+        await using (var s = File.Create(Path.Combine(dir, stored))) await f.CopyToAsync(s);
+        outList.Add(new { file = stored, name = safe, type = RefType(stored), size = f.Length, url = $"/api/projects/{id}/attachments/{Uri.EscapeDataString(stored)}" });
+    }
+    return Results.Ok(outList);
+}).DisableAntiforgery();
+
+app.MapGet("/api/projects/{id}/attachments/{file}", (string id, string file) =>
+{
+    var p = store.Get(id);
+    if (p == null) return Results.NotFound();
+    var path = Path.Combine(store.RefsDir(p), Path.GetFileName(file));
+    return File.Exists(path) ? Results.File(path, RefType(file), Path.GetFileName(file)) : Results.NotFound();
 });
 
 app.MapPut("/api/projects/{id}/overrides", (string id, Dictionary<string, string?> o) =>
@@ -426,7 +481,7 @@ app.MapGet("/api/projects/{id}/export", (string id, AppWorkspace ws) =>
             foreach (var f in Directory.EnumerateFiles(appDir, "*", SearchOption.AllDirectories))
             {
                 var rel = Path.GetRelativePath(appDir, f).Replace('\\', '/');
-                if (rel.StartsWith("bin/") || rel.StartsWith("obj/") || rel.StartsWith(".qa/") || rel.EndsWith(".db") || rel.EndsWith(".db-shm") || rel.EndsWith(".db-wal")) continue;
+                if (rel.StartsWith("bin/") || rel.StartsWith("obj/") || rel.StartsWith(".qa/") || rel.StartsWith(".refs/") || rel.EndsWith(".db") || rel.EndsWith(".db-shm") || rel.EndsWith(".db-wal")) continue;
                 System.IO.Compression.ZipFileExtensions.CreateEntryFromFile(zip, f, "app/" + rel);
             }
         }
@@ -456,7 +511,7 @@ record AgentPatch(string? Model, string? Effort, int? MaxInstances, string? Pers
 record NewAgent(string Id, string Role, string? Initials, string Department, string? Model, string? Persona, string? StageId, string? NewStageTitle, bool Spawnable, int? MaxInstances);
 record NewProject(bool AutoApprove);
 record SettingsPatch(string? Language, decimal? MaxUsdPerProject = null, long? MaxTokensPerProject = null);
-record ChatIn(string Text);
+record ChatIn(string? Text, List<string>? Attachments);
 record Toggle(bool On);
 record TitleIn(string? Title);
 record GateIn(string Decision, string? Note);

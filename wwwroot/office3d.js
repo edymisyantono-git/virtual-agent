@@ -142,7 +142,7 @@ function wallPlaque(w, h = 0.95) {
     ctx.beginPath(); ctx.roundRect(6, 6, W - 12, H - 12, 26); ctx.fill();
     ctx.strokeStyle = border; ctx.lineWidth = 10; ctx.stroke();
     ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "#1f2a3a";
-    ctx.font = `700 92px "Segoe UI", system-ui, sans-serif`; ctx.fillText(lines[0], W / 2, H * 0.33, W - 50);
+    ctx.font = `700 92px "Segoe UI", system-ui, sans-serif`; ctx.fillText(lines[0], W / 2, lines[1] ? H * 0.33 : H * 0.52, W - 50);
     ctx.fillStyle = "#4b5b70"; ctx.font = `600 66px "Segoe UI", system-ui, sans-serif`; ctx.fillText(lines[1] || "", W / 2, H * 0.7, W - 50);
     tex.needsUpdate = true;
   };
@@ -445,8 +445,7 @@ function makeBillboard(view) {             // a campaign poster with a rising ar
 function makeCounter(label) {              // a help desk counter
   const g = new THREE.Group();
   g.add(box(2.4, 1.0, 0.6, "#2f9c95", 0, 0.5, 0), box(2.6, 0.08, 0.8, "#ffffff", 0, 1.04, 0));
-  const s = labelSprite([label], { color: "#2f9c95" }); s.userData.mult = 0.75; s.position.set(0, 1.25, 0.2); g.add(s);
-  return g;
+  return g;                                                                       // its name hangs on the wall (see wallSigns)
 }
 function makeBeanBag(color) {
   const m = new THREE.Mesh(new THREE.SphereGeometry(0.45, 14, 10), toon(color)); m.scale.y = 0.6; m.position.y = 0.27; m.castShadow = true;
@@ -484,8 +483,9 @@ const ROOMS = {
 };
 
 export class OfficeView {
-  // opts.layout: "bands" (Office 1: the lobby in the middle, rooms around it) or "rect" (Office 2: one rectangle,
-  // rooms packed in rows, the CEO in the front right corner)
+  // opts.layout: "bands" (Office 1: the lobby in the middle, rooms around it), "rect" (Office 2: one rectangle,
+  // rooms packed in rows, the CEO in the front right corner) or "cubicle" (Office 3: the same rectangle as one open
+  // floor; every agent works in a cubicle, departments are carpet areas, only the CEO has a room, with glass walls)
   constructor(container, viz, opts = {}) {
     this.layout = opts.layout || "bands";
     this.container = container;
@@ -592,7 +592,7 @@ export class OfficeView {
       const deskW = Math.max(3.8, cols * DESK_W + 1.2);
       return { dept, list, cols, cells, rows, theme, deskW, w: deskW + 1.4 + theme.side, d: Math.max(rows * DESK_D + 3.2, 6.4) };
     });
-    if (this.layout === "rect") { [LW, LD] = this.packRect(rooms, LW, LD); }
+    if (this.layout === "rect" || this.layout === "cubicle") { [LW, LD] = this.packRect(rooms, LW, LD); }
     else {
       // One tidy building in three bands: the lobby in the middle band with one room on each side, the other rooms in
       // a band behind it and a band in front of it. Each room is as wide as its people and furniture need, so a room
@@ -634,7 +634,9 @@ export class OfficeView {
 
     // where each room's door leads: the lobby when the room touches it, otherwise the neighbour toward the middle
     const overlapX = (a, b) => Math.min(a.x + a.w / 2, b.x + b.w / 2) - Math.max(a.x - a.w / 2, b.x - b.w / 2);
-    if (this.layout === "rect") this.linkByWalls(rooms);
+    const open = this.layout === "cubicle";                                    // one open floor: no walls, no doors
+    if (open) for (const room of rooms) room.link = this.lobby;
+    else if (this.layout === "rect") this.linkByWalls(rooms);
     else for (const room of rooms) {
       if (!room.band) { room.link = this.lobby; continue; }
       if (overlapX(room, this.lobby) >= 1.8) { room.link = this.lobby; continue; }
@@ -644,6 +646,7 @@ export class OfficeView {
     for (const r of [this.lobby, ...rooms]) r.doors = { back: [], left: [] };
     this.lobby.route = [this.entrance.clone()];
     for (const room of rooms) {
+      if (open) { room.doorIn = []; room.front = true; continue; }
       // the shared wall belongs to the room on the right (its left wall) or in front (its back wall)
       const a = room, b = room.link, v = new THREE.Vector3();
       const side = Math.abs(Math.abs(a.x - b.x) - (a.w + b.w) / 2) < 0.01;
@@ -664,7 +667,10 @@ export class OfficeView {
     // routes from the entrance through the doors
     const routeOf = r => r.route || (r.route = [...routeOf(r.link), ...r.doorIn]);
     for (const room of rooms) routeOf(room);
-    this.platform(0, 0, 0, LW, LD, "#f28c38", this.lobby.doors);
+    if (open) {
+      this.openFloor([this.lobby, ...rooms]);
+      this.glassRoom(0, 0, LW, LD);
+    } else this.platform(0, 0, 0, LW, LD, "#f28c38", this.lobby.doors);
     // the CEO's status on a plaque on the lobby's back wall, right of the TV, where no doorway is
     const PW = 4.0, doorsBack = this.lobby.doors.back;
     let px = -LW / 2 + 3.4 + 1.2 + PW / 2, bestGap = -1;
@@ -676,7 +682,7 @@ export class OfficeView {
     // the lobby's name on the floor, like every room: in the open space between the CEO's desk and the sofas
     // (in front of the reception desk it would be hidden behind it)
     const lobbySign = floorLabel(t("CEO"), new THREE.Color("#f28c38"), 2.4);
-    lobbySign.position.set(0.55, 0.012, 0.5); this.world.add(lobbySign); this.signs.push(lobbySign);
+    lobbySign.position.set(0.55, 0.012, 0.5); this.world.add(lobbySign); this.signs.push(lobbySign); lobbySign.userData.room = this.lobby;
     this.ceoPlaque = wallPlaque(PW, 1.4);
     this.ceoPlaque.position.set(px, 0.92, -LD / 2 + 0.19);
     this.world.add(this.ceoPlaque);
@@ -684,7 +690,11 @@ export class OfficeView {
     for (const room of rooms) {
       const dc = cssColor(`--d-${room.dept}`, "#4aa3ff");
       const th = room.theme;
-      this.platform(room.x, room.y, room.z, room.w, room.d, dc, room.doors);
+      if (open) {   // a department area: a carpet in its colour on the open floor
+        const carpet = new THREE.Mesh(new THREE.BoxGeometry(room.w - 0.5, 0.025, room.d - 0.5),
+          new THREE.MeshStandardMaterial({ color: dc.clone().lerp(new THREE.Color("#ffffff"), 0.7), roughness: 0.95 }));
+        carpet.position.set(room.x, 0.013, room.z); carpet.receiveShadow = true; this.world.add(carpet);
+      } else this.platform(room.x, room.y, room.z, room.w, room.d, dc, room.doors);
       const g = new THREE.Group(); g.position.set(room.x, room.y, room.z); this.world.add(g);
 
       // the department's furniture: on the back wall (behind the desks) and in the space beside the desks
@@ -702,6 +712,20 @@ export class OfficeView {
       }
       if (th.aside) { const a = th.aside(local); a.position.set(room.w / 2 - 0.35 - th.side / 2, 0, 0.3); g.add(a); this.obstacles.push(a); }
       this.anim.push(...local.anim.map(fn => ({ fn, dept: room.dept })));
+      // a plaque on the back wall for rooms with a counter (like the CEO's): above the counter, clear of doorways
+      if (room.dept === "support") {
+        const PW = 3.0, want = room.w / 2 - 0.35 - th.side / 2;                   // over the help desk
+        let px = want;
+        for (const dx of room.doors.back) if (Math.abs(room.x + px - dx) < PW / 2 + 0.8) px = dx - room.x - Math.sign(dx - room.x - px || 1) * (PW / 2 + 0.8);
+        px = Math.max(-room.w / 2 + PW / 2 + 0.3, Math.min(room.w / 2 - PW / 2 - 0.3, px));
+        const plaque = wallPlaque(PW, 1.0);
+        plaque.userData.set([t("Help desk"), ""], "#2f9c95", false);
+        plaque.position.set(px, 0.92, -room.d / 2 + 0.19); g.add(plaque);
+        if (open) {   // no wall in the open office: the sign stands on two posts
+          plaque.position.y = 1.5;
+          for (const sx of [-PW / 2 + 0.15, PW / 2 - 0.15]) { const post = box(0.06, 1.0, 0.06, "#9aa3ad", px + sx, 0.5, -room.d / 2 + 0.16, false); g.add(post); }
+        }
+      }
       const pl = makePlant(0.9); pl.position.set(room.w / 2 - 0.5, 0, room.d / 2 - 0.5); g.add(pl); this.obstacles.push(pl);
       room.deskX = deskX;
       // The department's name painted on the floor. Front-row rooms: along the open front edge. Rooms with another
@@ -710,7 +734,7 @@ export class OfficeView {
       const front = room.front;
       const sign = floorLabel(nm(meta.departments[room.dept], "name") || room.dept, dc, front ? room.w - 1.6 : Math.max(room.deskW, room.w - 2.6));
       const sw = sign.geometry.parameters.width;                                   // back rooms: from the left, away from the furniture on the right
-      sign.position.set(front ? 0 : -room.w / 2 + 1.0 + sw / 2, 0.012, room.d / 2 - (front ? 0.75 : 2.5)); g.add(sign); this.signs.push(sign);
+      sign.position.set(front ? 0 : -room.w / 2 + 1.0 + sw / 2, 0.012, room.d / 2 - (front ? 0.75 : 2.5)); g.add(sign); this.signs.push(sign); sign.userData.room = room;
 
       // desks and people: the desks of one role side by side
       const left0 = room.deskX - (room.cols - 1) * DESK_W / 2, top0 = -room.d / 2 + 2.1;
@@ -730,12 +754,57 @@ export class OfficeView {
     this.sun.position.set(span * 0.45, span * 1.2, span * 0.3); this.sun.target.position.set(0, 0, 0);
     this.sun.shadow.camera.updateProjectionMatrix();
     this.buildNav();
+    this.placeFloorLabels();
     for (const p of this.people.values()) if (p.walkIn) {
       p.walkIn = false;
       const aisle = this.aisleOf(p);
       Object.assign(p, { path: [this.entrance.clone(), ...this.navPath(this.entrance, aisle), p.seat.clone()], seg: 0, segT: 0, dwell: null, handover: null, speed: 3 });
     }
     if (!this.framed) { this.frame(); this.framed = true; }
+  }
+
+  // Office 3: one open floor under everything, with the building's own walls at the back and on the left.
+  openFloor(rects) {
+    const x0 = Math.min(...rects.map(r => r.x - r.w / 2)), x1 = Math.max(...rects.map(r => r.x + r.w / 2));
+    const z0 = Math.min(...rects.map(r => r.z - r.d / 2)), z1 = Math.max(...rects.map(r => r.z + r.d / 2));
+    const w = x1 - x0, d = z1 - z0, x = (x0 + x1) / 2, z = (z0 + z1) / 2;
+    this.world.add(box(w, RIM, d, "#d9d3ca", x, -RIM / 2 - 0.08, z));
+    this.world.add(box(w, 0.06, d, "#e9ecef", x, -0.11, z, false));
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(w, 0.1, d), woodFloor(w, d));
+    floor.position.set(x, -0.05, z); floor.receiveShadow = true; this.world.add(floor);
+    const H = 1.7, T = 0.18, wall = "#f7f5f0";
+    const back = box(w, H, T, wall, x, H / 2, z0 + T / 2), left = box(T, H, d, "#efece6", x0 + T / 2, H / 2, z);
+    this.world.add(back, left); this.obstacles.push(back, left);
+    for (let wx = x0 + 3; wx < x1 - 2; wx += 6)                                    // windows along the back wall
+      this.world.add(box(2.4, 0.8, 0.04, "#dff1fb", wx, 0.95, z0 + T + 0.01, false));
+  }
+
+  // Office 3: the CEO's room, glass walls in slim aluminium frames on the two sides that face the floor, a doorway
+  // in the left wall toward the front.
+  glassRoom(x, z, w, d) {
+    const H = 1.9, DOOR = 1.4, doorZ = z + d / 2 - 1.6;
+    const glass = new THREE.MeshPhysicalMaterial({ color: "#d8eef8", transparent: true, opacity: 0.28, roughness: 0.05, metalness: 0, depthWrite: false });
+    const frame = "#9aa3ad";
+    const pane = (len, along, cx, cz) => {
+      const m = new THREE.Mesh(along === "x" ? new THREE.BoxGeometry(len, H, 0.05) : new THREE.BoxGeometry(0.05, H, len), glass);
+      m.position.set(cx, H / 2, cz); m.renderOrder = 2; this.world.add(m); this.obstacles.push(m);
+      // frame: a rail on top and at the floor, posts every ~1.6 m
+      this.world.add(along === "x" ? box(len, 0.05, 0.08, frame, cx, H, cz, false) : box(0.08, 0.05, len, frame, cx, H, cz, false));
+      this.world.add(along === "x" ? box(len, 0.06, 0.08, frame, cx, 0.03, cz, false) : box(0.08, 0.06, len, frame, cx, 0.03, cz, false));
+      const n = Math.max(1, Math.round(len / 1.6));
+      for (let i = 0; i <= n; i++) {
+        const t = -len / 2 + (len * i) / n;
+        this.world.add(along === "x" ? box(0.05, H, 0.08, frame, cx + t, H / 2, cz, false) : box(0.08, H, 0.05, frame, cx, H / 2, cz + t, false));
+      }
+    };
+    const bz = z - d / 2 + 0.1, lx = x - w / 2 + 0.1;
+    pane(w - 0.1, "x", x + 0.05, bz);                                               // back
+    const a = z - d / 2 + 0.1, b = doorZ - DOOR / 2, c = doorZ + DOOR / 2, e = z + d / 2;
+    pane(b - a, "z", lx, (a + b) / 2);                                              // left, behind the doorway
+    if (e - c > 0.2) pane(e - c, "z", lx, (c + e) / 2);                             // left, in front of it
+    // a lighter floor inside the CEO's room
+    const rug = new THREE.Mesh(new THREE.BoxGeometry(w - 0.6, 0.02, d - 0.6), new THREE.MeshStandardMaterial({ color: "#f3e7da", roughness: 0.95 }));
+    rug.position.set(x + 0.15, 0.012, z + 0.15); rug.receiveShadow = true; this.world.add(rug);
   }
 
   // A clean room block: white floor on a coloured base slab, with two pastel walls (back and left) like a cut-away.
@@ -778,6 +847,14 @@ export class OfficeView {
     const color = roleColor(n.base);
     const desk = makeDesk(color, n.dept);
     desk.g.position.copy(pos); this.world.add(desk.g); this.obstacles.push(desk.g);
+    if (this.layout === "cubicle") {
+      const panel = "#c9ced6", trim = color.clone().lerp(new THREE.Color("#ffffff"), 0.15), H = 1.25;
+      const cub = new THREE.Group();
+      cub.add(box(2.36, H, 0.06, panel, 0, H / 2, -0.56), box(2.36, 0.05, 0.08, trim, 0, H + 0.02, -0.56));            // back
+      for (const sx of [-1.18, 1.18])
+        cub.add(box(0.06, H, 1.56, panel, sx, H / 2, 0.22), box(0.08, 0.05, 1.56, trim, sx, H + 0.02, 0.22));          // sides
+      desk.g.add(cub);
+    }
     const seed = hash(key);
     const person = makePerson(color, seed, OUTFITS[n.dept] || {});
     const seat = pos.clone().add(new THREE.Vector3(0, 0, 0.85));
@@ -913,6 +990,46 @@ export class OfficeView {
     this.nav = { C, x0, z0, nx, nz, grid };
   }
 
+  // The camera angle is fixed, so what hides a floor name is known: move each name to the spot nearest to where it
+  // was put that lies on open floor (no furniture on it) and has nothing tall between it and the camera.
+  placeFloorLabels() {
+    const N = this.nav; if (!N) return;
+    const toCam = new THREE.Vector3(60, 128, 132).normalize();                  // the view direction (see frame())
+    this.world.updateMatrixWorld(true);
+    const boxes = this.obstacles.map(o => new THREE.Box3().setFromObject(o)).filter(b => !b.isEmpty() && b.max.y > 0.15);
+    const ray = new THREE.Ray();
+    const hidden = (x, z) => { ray.origin.set(x, 0.02, z); ray.direction.copy(toCam); return boxes.some(b => ray.intersectsBox(b)); };
+    const free = (x, z) => {
+      const i = Math.round((x - N.x0) / N.C), j = Math.round((z - N.z0) / N.C);
+      return i >= 0 && j >= 0 && i < N.nx && j < N.nz && !N.grid[j * N.nx + i];
+    };
+    const v = new THREE.Vector3();
+    for (const s of this.signs) {
+      const r = s.userData.room; if (!r) continue;
+      const { width: w, height: h } = s.geometry.parameters;
+      const pref = s.getWorldPosition(v.clone());
+      const samples = (x, z) => [[0, 0], [-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5], [-0.25, 0], [0.25, 0], [0, -0.5], [0, 0.5]]
+        .map(([a, b]) => [x + a * w * 0.96, z + b * h * 0.9]);
+      const search = strict => {
+        let best = null;
+        for (let z = r.z - r.d / 2 + h / 2 + 0.3; z <= r.z + r.d / 2 - h / 2 - 0.15; z += 0.25)
+          for (let x = r.x - r.w / 2 + w / 2 + 0.3; x <= r.x + r.w / 2 - w / 2 - 0.2; x += 0.3) {
+            const d = (x - pref.x) ** 2 + (z - pref.z) ** 2 * 1.5;                // stay near the front edge rather than sliding back
+            if (best && d >= best.d) continue;
+            const pts = samples(x, z);
+            if (strict && !pts.every(([px, pz]) => free(px, pz))) continue;
+            if (pts.some(([px, pz]) => hidden(px, pz))) continue;
+            best = { x, z, d };
+          }
+        return best;
+      };
+      const best = search(true) || search(false);
+      if (!best) continue;                                                       // nowhere better: keep it where it was
+      const local = s.parent.worldToLocal(new THREE.Vector3(best.x, pref.y, best.z));
+      s.position.set(local.x, s.position.y, local.z);
+    }
+  }
+
   navPath(from, to) {
     const N = this.nav; if (!N) return [to.clone()];
     const { C, x0, z0, nx, nz, grid } = N;
@@ -1033,7 +1150,7 @@ export class OfficeView {
 
     for (const p of this.people.values()) {
       const cls = p.node.g.classList, P = p.person;
-      const working = cls.contains("working"), off = cls.contains("off");
+      const working = cls.contains("working") && !cls.contains("paused"), off = cls.contains("off");   // paused: sits still
       const stalled = cls.contains("stalled") || cls.contains("retrying"), limited = cls.contains("limited");
       p.glow += ((working ? 1 : 0) - p.glow) * Math.min(1, dt * 4);
       P.g.visible = !off;

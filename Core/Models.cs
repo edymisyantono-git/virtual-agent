@@ -161,6 +161,8 @@ public class Project
     /// Download sites the owner allowed / refused for this project when an agent asked (on top of codeMode.allowedHosts).
     public List<string> AllowedHosts { get; set; } = new();
     public List<string> RefusedHosts { get; set; } = new();
+    /// Every reference file the customer attached in the chat, oldest first (all agents get them).
+    public List<ChatAttachment> Attachments { get; set; } = new();
     public ProjectPlan? Plan { get; set; }
     /// Tokens added on top of budget.maxTokensPerProject each time you approve the budget gate.
     public long ExtraBudget { get; set; }
@@ -181,7 +183,21 @@ public class ChatMessage
     public string? AgentId { get; set; }
     public string Text { get; set; } = "";
     public DateTime At { get; set; } = DateTime.UtcNow;
+    /// Files the customer pasted or attached to this message (screenshots, documents) as references for the team.
+    public List<ChatAttachment>? Attachments { get; set; }
 }
+
+/// A reference file from the customer, stored in data/projects/{id}/refs/{File}.
+public class ChatAttachment
+{
+    public string Name { get; set; } = "";   // the original file name
+    public string File { get; set; } = "";   // the stored file name (unique in the project)
+    public string Type { get; set; } = "";   // media type, e.g. image/png
+    public long Size { get; set; }
+}
+
+/// A file sent to the model with a call (images and PDFs are seen directly).
+public record LlmAttachment(string Name, string MediaType, string Path);
 
 public class ArtifactRef
 {
@@ -260,7 +276,7 @@ public class Handoff
 
 public record LlmRequest(string AgentId, string Model, string Effort, int MaxTokens, string System, List<(string Role, string Text)> Messages,
     List<string>? Tools = null, string? Cwd = null, int MaxTurns = 1, decimal? MaxBudgetUsd = null, Action<AgentProgress>? OnProgress = null,
-    List<string>? AllowedHosts = null);
+    List<string>? AllowedHosts = null, List<LlmAttachment>? Attachments = null);
 
 /// What a running agent is doing right now, reported every couple of seconds while it works.
 /// Phase: starting | thinking | writing | tool | retrying | rate_limited.

@@ -55,6 +55,13 @@ public class AgentSdkLlm : ILlmClient, IDisposable
         throw new InvalidOperationException("The agent runner did not start within 15 seconds.");
     }
 
+    /// Hold (or release) every agent of a project at its next action: a real pause, not only "nothing new starts".
+    public async Task SetPausedAsync(string projectId, bool paused)
+    {
+        try { await _http.PostAsJsonAsync("/pause", new { project = projectId, paused }); }
+        catch (HttpRequestException) { /* runner not running: nothing to hold */ }
+    }
+
     private async Task<bool> HealthyAsync()
     {
         try { return (await _http.GetAsync("/health")).IsSuccessStatusCode; }
@@ -65,7 +72,9 @@ public class AgentSdkLlm : ILlmClient, IDisposable
     {
         var jobId = $"{project.Id}:{req.AgentId}:{Guid.NewGuid():N}";
         var job = new { agentId = req.AgentId, model = req.Model, effort = req.Effort, maxOutputTokens = req.MaxTokens, system = req.System, prompt = Flatten(req.Messages),
-            tools = req.Tools, cwd = req.Cwd, maxTurns = req.MaxTurns, maxBudgetUsd = req.MaxBudgetUsd, jobId, allowedHosts = req.AllowedHosts ?? [] };
+            tools = req.Tools, cwd = req.Cwd, maxTurns = req.MaxTurns, maxBudgetUsd = req.MaxBudgetUsd, jobId, allowedHosts = req.AllowedHosts ?? [],
+            attachments = (req.Attachments ?? []).Where(a => File.Exists(a.Path))
+                .Select(a => new { name = a.Name, mediaType = a.MediaType, data = Convert.ToBase64String(File.ReadAllBytes(a.Path)) }).ToList() };
 
         // While the runner works, ask it every 2 s what the agent is doing and pass that on.
         using var pollCts = CancellationTokenSource.CreateLinkedTokenSource(ct);

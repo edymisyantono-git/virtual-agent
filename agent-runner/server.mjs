@@ -20,6 +20,17 @@ const log = line => console.log(`${new Date().toISOString()} ${line}`);
 // ---------- live progress: what each running agent is doing right now ----------
 // phase: starting (waiting for the first token) | thinking | writing | tool | retrying | rate_limited
 const jobs = new Map();
+// Projects the CEO paused: their agents wait before each next action (tool use) until they are continued.
+const pausedProjects = new Set();
+const projectOf = jobId => String(jobId || "").split(":")[0];
+async function waitWhilePaused(jobId) {
+  const pid = projectOf(jobId);
+  if (!pid || !pausedProjects.has(pid)) return;
+  const job = jobs.get(jobId), before = job ? { phase: job.phase, detail: job.detail } : null;
+  if (job) Object.assign(job, { phase: "paused", detail: "" });
+  while (pausedProjects.has(pid)) await new Promise(r => setTimeout(r, 400));
+  if (job) Object.assign(job, before, { lastActivityAt: Date.now() });
+}
 
 function brief(input) {
   if (!input || typeof input !== "object") return "";
@@ -85,9 +96,29 @@ class StallError extends Error {
   constructor() { super(`No activity for ${Math.round(STALL_MS / 60000)} minutes.`); this.name = "StallError"; }
 }
 
+// The customer's reference images and PDFs go with the prompt as content blocks, so the model sees them.
+// Without attachments the prompt stays a plain string.
+const SEEN = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"]);
+function withAttachments(prompt, attachments) {
+  const files = (attachments || []).filter(a => a && SEEN.has(a.mediaType) && a.data);
+  if (!files.length) return prompt;
+  const content = [
+    ...files.flatMap(a => [
+      { type: "text", text: `Reference file from the customer: ${a.name}` },
+      a.mediaType === "application/pdf"
+        ? { type: "document", source: { type: "base64", media_type: a.mediaType, data: a.data }, title: a.name }
+        : { type: "image", source: { type: "base64", media_type: a.mediaType, data: a.data } },
+    ]),
+    { type: "text", text: prompt },
+  ];
+  return (async function* () {
+    yield { type: "user", message: { role: "user", content }, parent_tool_use_id: null, session_id: "" };
+  })();
+}
+
 const fmtReset = ms => ms ? new Date(ms).toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit" }) : "later";
 
-async function runAgent({ agentId, model, effort, system, prompt, maxOutputTokens, tools = [], cwd, maxTurns = 1, maxBudgetUsd, jobId, allowedHosts = [] }) {
+async function runAgent({ agentId, model, effort, system, prompt, maxOutputTokens, tools = [], cwd, maxTurns = 1, maxBudgetUsd, jobId, allowedHosts = [], attachments = [] }) {
   const usesTools = Array.isArray(tools) && tools.length > 0 && cwd && fs.existsSync(cwd);
   const options = {
     model,
@@ -101,7 +132,8 @@ async function runAgent({ agentId, model, effort, system, prompt, maxOutputToken
   };
   if (EFFORTS.has(effort)) options.effort = effort;
   if (usesTools) {
-    options.canUseTool = makeGuard(cwd, agentId, log, allowedHosts);
+    const guard = makeGuard(cwd, agentId, log, allowedHosts);
+    options.canUseTool = async (...args) => { await waitWhilePaused(jobId); return guard(...args); };   // paused: hold here
     if (GIT_BASH) options.env.CLAUDE_CODE_GIT_BASH_PATH = GIT_BASH;
     if (Number(maxBudgetUsd) > 0) options.maxBudgetUsd = Number(maxBudgetUsd);
   }
@@ -119,6 +151,7 @@ async function runAgent({ agentId, model, effort, system, prompt, maxOutputToken
   options.abortController = ac;
   let lastMsgAt = Date.now(), stalled = false;
   const watch = setInterval(() => {
+    if (pausedProjects.has(projectOf(jobId))) { lastMsgAt = Date.now(); return; }   // waiting on purpose, not stuck
     if (!stalled && Date.now() - lastMsgAt > STALL_MS) {
       stalled = true; clearInterval(watch);
       log(`${agentId} no activity for ${Math.round(STALL_MS / 1000)} s; aborting`); ac.abort();
@@ -127,7 +160,7 @@ async function runAgent({ agentId, model, effort, system, prompt, maxOutputToken
 
   let result = null, turns = 0;
   try {
-    for await (const msg of query({ prompt, options })) {
+    for await (const msg of query({ prompt: withAttachments(prompt, attachments), options })) {
       lastMsgAt = Date.now();
       track(job, msg);
       if (msg.type === "assistant") turns++;
@@ -199,6 +232,16 @@ http.createServer(async (req, res) => {
     if (!id || req.url === "/progress") return send(res, 200, [...jobs.values()].map(snapshot));
     const j = jobs.get(id);
     return j ? send(res, 200, snapshot(j)) : send(res, 404, { error: "No such job" });
+  }
+  if (req.method === "POST" && req.url === "/pause") {   // { project, paused }: hold or release that project's agents
+    let body = ""; for await (const c of req) body += c;
+    try {
+      const { project, paused } = JSON.parse(body || "{}");
+      if (!project) return send(res, 400, { ok: false, error: "project missing" });
+      if (paused) pausedProjects.add(project); else pausedProjects.delete(project);
+      log(`${project} ${paused ? "paused" : "continued"}`);
+      return send(res, 200, { ok: true, paused: pausedProjects.has(project) });
+    } catch (e) { return send(res, 400, { ok: false, error: e.message }); }
   }
   if (req.method === "POST" && req.url === "/browse") {   // browser check for QA, called by the orchestrator
     let body = ""; for await (const c of req) body += c;

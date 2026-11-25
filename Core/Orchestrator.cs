@@ -87,9 +87,12 @@ public class Orchestrator
         return p;
     }
 
-    public async Task CustomerMessageAsync(Project p, string text)
+    public async Task CustomerMessageAsync(Project p, string text, List<ChatAttachment>? files = null)
     {
-        AddChat(p, "customer", null, text);
+        files = files is { Count: > 0 } ? files : null;
+        if (files != null) lock (p) p.Attachments.AddRange(files);
+        AddChat(p, "customer", null, text, files);
+        if (files != null) text = ChatLine(text, files);
         var rt = Rt(p);
         if (p.Status == ProjectStatus.Intake)
         {
@@ -121,7 +124,7 @@ public class Orchestrator
                          "each opens with a click, and the 'Download all (.zip)' button there saves every document at once. Name the most relevant documents. " +
                          "If a fact is not given, say you will check with the team. Reply with plain text only, no json block." + RulesBlock(def);
             var msg = $"PROJECT FACTS\n{ProjectFacts(p)}\n\nRECENT CHAT\n" +
-                      string.Join("\n", p.Chat.TakeLast(8).Select(c => $"{(c.Role == "customer" ? "Customer" : "Team")}: {c.Text}")) +
+                      string.Join("\n", p.Chat.TakeLast(8).Select(c => $"{(c.Role == "customer" ? "Customer" : "Team")}: {ChatLine(c.Text, c.Attachments)}")) +
                       $"\n\nCUSTOMER QUESTION: {question}";
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var (result, model) = await CallAsync(p, def, "chat", system, [("user", msg)], ct);
@@ -192,7 +195,7 @@ public class Orchestrator
                      "{\"reply\": \"<your next message to the customer>\", \"slots\": {\"problem\": \"\", \"users\": \"\", \"features\": \"\", \"integrations\": \"\", \"constraints\": \"\"}, \"complete\": false}\n" +
                      "Copy known facts into slots and add what the customer just told you; leave unknown slots empty. Set complete to true only when all five slots are filled." + RulesBlock(agent);
         var messages = p.Chat.SkipWhile(c => c.Role != "customer")
-            .Select(c => (c.Role == "customer" ? "user" : "assistant", c.Text)).ToList();
+            .Select(c => (c.Role == "customer" ? "user" : "assistant", ChatLine(c.Text, c.Attachments))).ToList();
 
         var (result, model) = await CallAsync(p, agent, "discovery", system, messages, ct);
         _store.Publish(p, "typing", new { agentId = "intake", on = false });
@@ -500,7 +503,7 @@ public class Orchestrator
         if (!Directory.Exists(dir)) return "(none yet)";
         var files = Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)
             .Select(f => Path.GetRelativePath(dir, f).Replace('\\', '/'))
-            .Where(f => !f.StartsWith("bin/") && !f.StartsWith("obj/") && !f.StartsWith(".qa/") && !f.EndsWith(".db"))
+            .Where(f => !f.StartsWith("bin/") && !f.StartsWith("obj/") && !f.StartsWith(".qa/") && !f.StartsWith(".refs/") && !f.EndsWith(".db"))
             .OrderBy(f => f).Take(80).ToList();
         return files.Count == 0 ? "(none yet)" : string.Join(", ", files);
     }
@@ -1081,6 +1084,7 @@ public class Orchestrator
         if (answers != null) sb.AppendLine("CUSTOMER ANSWERS:\n" + answers);
         sb.AppendLine("\nCUSTOMER BRIEF:");
         foreach (var k in Slots) sb.AppendLine($"- {k}: {(p.Brief.TryGetValue(k, out var v) ? v : "(unknown)")}");
+        sb.Append(ReferencesBlock(p, UsesTools(def)));
 
         var docs = RelevantDocs(p, def, inst, round);
         if (docs.Count > 0)
@@ -1184,8 +1188,9 @@ public class Orchestrator
             rt.PauseGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         }
         if (p.Status == ProjectStatus.Running) SetStatus(p, ProjectStatus.Paused);
-        _store.Publish(p, "log", new { level = "warn", text = L("Paused. Agents at work finish their current step; nothing new starts until you press Continue.",
-            "Dijeda. Agent yang sedang bekerja menyelesaikan langkahnya; tidak ada yang baru dimulai sampai Anda menekan Teruskan.") });
+        if (_llm is AgentSdkLlm sdk) _ = sdk.SetPausedAsync(p.Id, true);
+        _store.Publish(p, "log", new { level = "warn", text = L("Paused. Agents at work stop at their next action and wait; nothing new starts until you press Continue. (A reply already being written is finished first.)",
+            "Dijeda. Agent yang sedang bekerja berhenti di aksi berikutnya dan menunggu; tidak ada yang baru dimulai sampai Anda menekan Teruskan. (Balasan yang sedang ditulis diselesaikan dulu.)") });
         _store.Save(p);
     }
 
@@ -1194,6 +1199,7 @@ public class Orchestrator
         var rt = Rt(p);
         var gate = rt.PauseGate ?? throw new InvalidOperationException(L("The project is not paused.", "Proyek tidak sedang dijeda."));
         rt.PauseGate = null;
+        if (_llm is AgentSdkLlm sdk) _ = sdk.SetPausedAsync(p.Id, false);
         if (p.Status == ProjectStatus.Paused) SetStatus(p, ProjectStatus.Running);
         _store.Publish(p, "log", new { level = "info", text = L("Continued.", "Diteruskan.") });
         gate.TrySetResult();
@@ -1278,10 +1284,11 @@ public class Orchestrator
                     $"{who}: API Claude menjawab '{r.Error}'{(r.Status is int s2 ? $" ({s2})" : "")}; mencoba ulang {r.Attempt}/{r.Max}.") });
             }
         }
+        if (tools) CopyRefsTo(p, _app.Dir(p));
         var req = new LlmRequest(def.Id, model.Model, _reg.ResolveEffort(def.Id), OutputLimit(def), system, messages,
             Tools: tools ? def.Tools : null, Cwd: tools ? _app.Dir(p) : null, MaxTurns: tools ? cm.MaxTurns : 1, MaxBudgetUsd: tools ? cm.MaxCallUsd : null,
             AllowedHosts: tools ? ApprovedHosts(p) : null,
-            OnProgress: OnProgress);
+            OnProgress: OnProgress, Attachments: SeenRefs(p));
         var res = await _llm.CompleteAsync(req, p, ct);
         if (res.StopReason.StartsWith("error_max"))
             _store.Publish(p, "log", new { level = "warn", text = L($"{RoleName(def)} stopped early ({(res.StopReason == "error_max_turns" ? $"{cm.MaxTurns} steps" : $"${cm.MaxCallUsd} per call")}); its part may be incomplete.",
@@ -1310,9 +1317,71 @@ public class Orchestrator
             tokenStop = b.MaxTokensPerProject > 0 ? p.ExtraBudget + b.MaxTokensPerProject : (long?)null });
     }
 
-    private void AddChat(Project p, string role, string? agentId, string text)
+    // ================= Reference files from the customer =================
+
+    private static readonly HashSet<string> SeenTypes = ["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"];
+    private const int MaxSeen = 5;                 // the newest images / PDFs go with every call
+    private const long MaxSeenBytes = 4_500_000;   // per image (API limit is about 5 MB); PDFs up to 20 MB
+
+    /// A chat line as the agents read it: the text plus the names of the attached files.
+    private static string ChatLine(string text, List<ChatAttachment>? files) =>
+        files is { Count: > 0 } ? $"{text}\n[attached: {string.Join(", ", files.Select(f => f.Name))}]".Trim() : text;
+
+    private static bool IsText(ChatAttachment a) => a.Type.StartsWith("text/") || a.Type is "application/json" or "application/xml" or "application/javascript"
+        || new[] { ".md", ".txt", ".csv", ".json", ".xml", ".yaml", ".yml", ".html", ".css", ".js", ".ts", ".cs", ".py", ".sql", ".log" }.Contains(Path.GetExtension(a.Name).ToLowerInvariant());
+
+    /// The images and PDFs the model sees directly with each call: the newest few.
+    private List<LlmAttachment> SeenRefs(Project p)
     {
-        var m = new ChatMessage { Role = role, AgentId = agentId, Text = text };
+        List<ChatAttachment> all; lock (p) all = p.Attachments.ToList();
+        var dir = _store.RefsDir(p);
+        return all.Where(a => SeenTypes.Contains(a.Type) && (a.Type == "application/pdf" ? a.Size <= 20_000_000 : a.Size <= MaxSeenBytes))
+            .TakeLast(MaxSeen).Select(a => new LlmAttachment(a.Name, a.Type, Path.Combine(dir, a.File))).ToList();
+    }
+
+    /// Every agent's prompt lists the customer's reference files; text files are included, images/PDFs are attached.
+    private string ReferencesBlock(Project p, bool tools)
+    {
+        List<ChatAttachment> all; lock (p) all = p.Attachments.ToList();
+        if (all.Count == 0) return "";
+        var seen = SeenRefs(p).Select(s => Path.GetFileName(s.Path)).ToHashSet();
+        var sb = new StringBuilder("\nCUSTOMER REFERENCES (files the customer attached in the chat as examples or references; follow them where they apply):\n");
+        int budget = 24000;
+        foreach (var a in all)
+        {
+            var where = tools ? $" (copy at .refs/{a.File})" : "";
+            if (seen.Contains(a.File)) { sb.AppendLine($"- {a.Name}: {(a.Type == "application/pdf" ? "PDF" : "image")}, attached to this message so you can see it{where}"); continue; }
+            if (IsText(a) && budget > 0)
+            {
+                string content;
+                try { content = File.ReadAllText(Path.Combine(_store.RefsDir(p), a.File)); } catch { content = ""; }
+                if (content.Length > Math.Min(8000, budget)) content = content[..Math.Min(8000, budget)] + "\n[...cut]";
+                budget -= content.Length;
+                sb.AppendLine($"- {a.Name}{where}:\n<<<\n{content}\n>>>");
+                continue;
+            }
+            sb.AppendLine($"- {a.Name} ({a.Type}, {a.Size / 1024} KB){(tools ? where : ": not readable here; ask the customer if its content matters")}");
+        }
+        return sb.ToString();
+    }
+
+    /// Code agents can open the reference files themselves: a copy inside the app folder (never released).
+    private void CopyRefsTo(Project p, string appDir)
+    {
+        var src = _store.RefsDir(p);
+        if (!Directory.Exists(src) || !Directory.Exists(appDir)) return;
+        var dst = Path.Combine(appDir, ".refs");
+        Directory.CreateDirectory(dst);
+        foreach (var f in Directory.GetFiles(src))
+        {
+            var to = Path.Combine(dst, Path.GetFileName(f));
+            if (!File.Exists(to)) File.Copy(f, to);
+        }
+    }
+
+    private void AddChat(Project p, string role, string? agentId, string text, List<ChatAttachment>? files = null)
+    {
+        var m = new ChatMessage { Role = role, AgentId = agentId, Text = text, Attachments = files };
         lock (p) p.Chat.Add(m);
         _store.Publish(p, "chat", m);
     }
