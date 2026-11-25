@@ -13,6 +13,11 @@ const PORT = Number(process.env.VC_RUNNER_PORT || 5081);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKSPACE = path.join(HERE, "workspace");   // neutral cwd for document-only agents
 fs.mkdirSync(WORKSPACE, { recursive: true });
+// Authentication: the engine uses Claude Code's own sign-in on this machine (~/.claude), or a standard Console API
+// key (sk-ant-api...) in ANTHROPIC_API_KEY. A "sk-ant-usr-" key is not accepted by the engine (tested 2026-11-25),
+// even though it works for direct API calls. Set VC_ISOLATE_AUTH=1 to ignore the machine's sign-in and use only the key.
+const CONFIG_DIR = process.env.VC_ISOLATE_AUTH === "1" ? path.join(HERE, "workspace", ".claude-config") : null;
+if (CONFIG_DIR) fs.mkdirSync(CONFIG_DIR, { recursive: true });
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const GIT_BASH = ["C:\\Program Files\\Git\\bin\\bash.exe", "C:\\Program Files (x86)\\Git\\bin\\bash.exe"].find(p => fs.existsSync(p));
 const log = line => console.log(`${new Date().toISOString()} ${line}`);
@@ -128,7 +133,7 @@ async function runAgent({ agentId, model, effort, system, prompt, maxOutputToken
     settingSources: [],              // ignore ~/.claude and project settings
     persistSession: false,
     cwd: usesTools ? cwd : WORKSPACE,
-    env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: "virtual-company/1.0" },
+    env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: "virtual-company/1.0", ...(CONFIG_DIR ? { CLAUDE_CONFIG_DIR: CONFIG_DIR } : {}) },
   };
   if (EFFORTS.has(effort)) options.effort = effort;
   if (usesTools) {

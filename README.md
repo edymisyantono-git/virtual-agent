@@ -24,6 +24,14 @@ atau **New request** untuk chat sendiri sebagai customer.
 Persiapan sekali: `cd agent-runner; npm install`. API key disimpan sebagai environment variable
 user `ANTHROPIC_API_KEY` (buka ulang terminal setelah di-set).
 
+**Autentikasi engine `agent-sdk`.** Agent SDK menjalankan Claude Code, yang memakai login Claude Code di
+mesin itu (`~/.claude`). Biaya yang tampil di layar adalah perkiraan SDK. Key Console berawalan
+`sk-ant-usr-` **tidak diterima** Claude Code (diuji 2026-11-25: "Not logged in" / "Credit balance is too
+low"), walau key itu berfungsi untuk panggilan API langsung. Agar agent ditagih ke saldo Console, buat key
+standar (`sk-ant-api03-...`), simpan di `ANTHROPIC_API_KEY`, lalu jalankan dengan `VC_ISOLATE_AUTH=1`
+supaya login mesin diabaikan. Kalau sesi login kedaluwarsa (misalnya laptop tidur semalam), proyek
+berstatus Failed; login ulang Claude Code lalu tekan **Resume**.
+
 **Kenapa lewat Node?** Di laptop kantor, Group Policy Windows membatasi cipher TLS (hampir semua
 CBC, tanpa TLS 1.3), sehingga .NET/PowerShell gagal handshake ke `api.anthropic.com`. Node memakai
 OpenSSL sendiri, jadi tidak terkena batasan itu. Mode `api` baru bisa dipakai di mesin tanpa
@@ -97,6 +105,30 @@ agents.json): bahasa UI, pesan dari tim (chat, aktivitas, label gate), dan bahas
 pertanyaan yang ditulis agent. Nama posisi, departemen, tahap, dan gate dalam bahasa Indonesia ada di
 field `names` (contoh `"names": { "id": "Analis Bisnis" }`); tanpa field itu nama Inggris yang tampil.
 Teks UI ada di `wwwroot/i18n.js`. Isi mode simulasi tetap berbahasa Inggris.
+
+## Mode kode: agent membangun aplikasi sungguhan
+
+Dengan `codeMode.enabled: true` (agents.json) dan engine `agent-sdk`, tim Engineering tidak lagi
+menulis kode di dokumen, tetapi langsung di folder **`data/projects/<id>/app`**:
+
+1. Sebelum tahap Build, orkestrator membuat kerangka `dotnet new web` (App.csproj).
+2. Semua agent diberi tahu stack wajib (`codeMode.stack`): ASP.NET Core 9 + SQLite (EF Core), HTML/JS
+   biasa di wwwroot, tanpa Docker atau cloud. Sistem luar (WhatsApp, email, SSO) dibuat sebagai fake.
+3. Peran dengan `tools` (Database, Backend, Frontend, DevOps menulis file; QA membaca dan menjalankan;
+   Security hanya membaca) bekerja **bergantian** di folder yang sama.
+4. Setelah Build, orkestrator menjalankan `dotnet build`. Error dikirim balik ke developer (maks. 2x).
+5. QA menjalankan aplikasi di port uji dan mengetesnya dengan `curl`.
+6. Setelah tahap terakhir, aplikasi di-build dan dijalankan. Tombol **Open app**, **Start app**, dan
+   **Stop app** ada di sebelah status. Source code ikut di **Download all (.zip)**.
+
+Keamanan (agent-runner/guard.mjs): file hanya di dalam folder app; perintah shell hanya dari daftar
+yang diizinkan (dotnet, curl, perintah file dasar); jaringan hanya ke localhost dan situs yang
+disetujui CEO (unduh saja); tanpa path absolut atau `..` keluar folder;
+`kill` hanya untuk proses milik agent sendiri. Biaya: `codeMode.maxCallUsd` per panggilan agent,
+`codeMode.maxTurns` langkah per panggilan, dan `budget.maxUsdPerProject` per proyek (gate budget).
+
+Kartu agent: setiap instance yang berjalan (developer paralel atau helper) mendapat kartunya sendiri
+(#1, #2, ...).
 
 ## Agent membagi tugasnya sendiri
 
