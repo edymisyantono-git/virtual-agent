@@ -88,9 +88,10 @@
     <div class="viz-wrap"><svg id="floor" role="img" aria-label="${t("Pipeline of agents by department")}"></svg>
       <div class="floor3d" id="floor3d" hidden aria-label="${t("3D floor: drag to rotate, scroll to zoom, right-drag to pan, click an agent for its settings")}"></div>
       <div class="floor3d office3d" id="office3d3" hidden aria-label="${t("Office view: the agents as people at work; drag to move, scroll to zoom, click a person for their settings")}"></div>
+      <div class="floor3d office3d" id="office3d4" hidden aria-label="${t("Office building on a street: drag to rotate, right-drag to move, scroll to zoom, click a person for their settings")}"></div>
       <div class="floor3d office3d" id="office3d2" hidden aria-label="${t("Office view: the agents as people at work; drag to move, scroll to zoom, click a person for their settings")}"></div>
       <div class="view-toggle" role="group" aria-label="${t("Floor view")}">
-        <button type="button" data-floorview="2d" aria-pressed="true">2D</button><button type="button" data-floorview="3d" aria-pressed="false">3D</button><button type="button" data-floorview="office2" aria-pressed="false" title="${t("Office with a room per department; the CEO in the front right corner")}">${t("Office")} 1</button><button type="button" data-floorview="office3" aria-pressed="false" title="${t("Open-plan office with cubicles; only the CEO has a glass room")}">${t("Office")} 2</button>
+        <button type="button" data-floorview="2d" aria-pressed="true">2D</button><button type="button" data-floorview="3d" aria-pressed="false">3D</button><button type="button" data-floorview="office2" aria-pressed="false" title="${t("Office with a room per department; the CEO in the front right corner")}">${t("Office")} 1</button><button type="button" data-floorview="office3" aria-pressed="false" title="${t("Open-plan office with cubicles; only the CEO has a glass room")}">${t("Office")} 2</button><button type="button" data-floorview="office4" aria-pressed="false" title="${t("The office as a shop on a street, game style; drag to rotate")}">${t("Office")} 3</button>
         <button type="button" id="officeHQ" hidden aria-pressed="true" title="${t("Picture quality: High (soft shading, smooth edges) or Normal (lighter for slower computers)")}">HQ</button>
         <button type="button" id="reset3d" hidden title="${t("Reset the 3D view")}" aria-label="${t("Reset the 3D view")}">⟲</button>
       </div>
@@ -874,21 +875,24 @@
   function initFloorView() {
     const KEY = "vc.floorView";
     let mode = "2d";   // a saved "office" (the old Office 1, now removed) opens the room office instead
-    try { const v = localStorage.getItem(KEY); mode = v === "office" ? "office2" : ["3d", "office2", "office3"].includes(v) ? v : "2d"; } catch { /* default */ }
+    try { const v = localStorage.getItem(KEY); mode = v === "office" ? "office2" : ["3d", "office2", "office3", "office4"].includes(v) ? v : "2d"; } catch { /* default */ }
     const set = m => {
       mode = m;
       try { localStorage.setItem(KEY, m); } catch { /* not persisted */ }
       document.querySelectorAll("[data-floorview]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.floorview === m)));
-      const is3d = m === "3d", isOffice = m === "office2" || m === "office3", any = is3d || isOffice;
+      const is3d = m === "3d", isOffice = m === "office2" || m === "office3" || m === "office4", any = is3d || isOffice;
       $(".viz-wrap").classList.toggle("is3d", is3d);
       $(".viz-wrap").classList.toggle("isoffice", isOffice);
-      $("#floor3d").hidden = !is3d; $("#office3d2").hidden = m !== "office2"; $("#office3d3").hidden = m !== "office3";
+      $("#floor3d").hidden = !is3d; $("#office3d2").hidden = m !== "office2"; $("#office3d3").hidden = m !== "office3"; $("#office3d4").hidden = m !== "office4";
       $("#reset3d").hidden = !any; $("#hint3d").hidden = !any; $("#officeHQ").hidden = !isOffice;
-      $("#hint3d").textContent = isOffice ? t("Drag to move · scroll to zoom · click a person") : t("Drag to rotate · scroll to zoom · right-drag to pan · click an agent");
+      $("#hint3d").textContent = isOffice && m !== "office4" ? t("Drag to move · scroll to zoom · click a person")
+        : m === "office4" ? t("Drag to rotate · right-drag to move · scroll to zoom · click a person")
+        : t("Drag to rotate · scroll to zoom · right-drag to pan · click an agent");
       if (!any) return;
       const [Cls, ev, slot, box, glob, opts] = is3d ? ["Floor3D", "floor3d-ready", "f3", "#floor3d", "vcFloor3D"]
         : m === "office2" ? ["OfficeView", "office-ready", "office2", "#office3d2", "vcOffice2", { layout: "rect", quality: officeQuality() }]   // one rectangle, CEO front right
-        : ["OfficeView", "office-ready", "office3", "#office3d3", "vcOffice3", { layout: "cubicle", quality: officeQuality() }];   // open plan, cubicles
+        : m === "office3" ? ["OfficeView", "office-ready", "office3", "#office3d3", "vcOffice3", { layout: "cubicle", quality: officeQuality() }]   // open plan, cubicles
+        : ["OfficeView", "office-ready", "office4", "#office3d4", "vcOffice4", { layout: "cubicle", style: "town", quality: officeQuality() }];   // game style, on a street, rotatable
       const start = () => {
         if (S[slot] || !window[Cls]) return;
         try { S[slot] = new window[Cls]($(box), viz, opts); window[glob] = S[slot]; }
@@ -905,10 +909,10 @@
     $("#officeHQ").onclick = () => {
       const q = officeQuality() === "high" ? "normal" : "high";
       try { localStorage.setItem("vc.officeQuality", q); } catch { /* not persisted */ }
-      S.office2?.setQuality(q); S.office3?.setQuality(q); showQ();
+      S.office2?.setQuality(q); S.office3?.setQuality(q); S.office4?.setQuality(q); showQ();
     };
     showQ();
-    $("#reset3d").onclick = () => ({ office2: S.office2, office3: S.office3 }[mode] || S.f3)?.resetView();
+    $("#reset3d").onclick = () => ({ office2: S.office2, office3: S.office3, office4: S.office4 }[mode] || S.f3)?.resetView();
     set(mode);
   }
 
@@ -1146,8 +1150,8 @@
     viz = new FloorViz($("#floor"));
     // The 3D floor mirrors the 2D one; hand-offs and the go-live burst are forwarded to it.
     const send2d = viz._send.bind(viz), celebrate2d = viz.celebrate.bind(viz);
-    viz._send = (a, b, kind, dur) => { send2d(a, b, kind, dur); if (!viz.quiet) { S.f3?.pulse(a, b, kind); S.office2?.pulse(a, b, kind); S.office3?.pulse(a, b, kind); } };
-    viz.celebrate = () => { celebrate2d(); S.f3?.celebrate(); S.office2?.celebrate(); S.office3?.celebrate(); };
+    viz._send = (a, b, kind, dur) => { send2d(a, b, kind, dur); if (!viz.quiet) { S.f3?.pulse(a, b, kind); S.office2?.pulse(a, b, kind); S.office3?.pulse(a, b, kind); S.office4?.pulse(a, b, kind); } };
+    viz.celebrate = () => { celebrate2d(); S.f3?.celebrate(); S.office2?.celebrate(); S.office3?.celebrate(); S.office4?.celebrate(); };
     $("#company").textContent = S.meta.company;
     const mode = $("#mode");
     if (DEMO) { mode.className = "pill sim"; mode.textContent = t("RECORDED RUN"); }

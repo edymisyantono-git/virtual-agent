@@ -249,6 +249,13 @@ function poseStand(p) {
   p.legL.rotation.x = p.legR.rotation.x = 0;
   p.armL.rotation.set(0, 0, 0.06); p.armR.rotation.set(0, 0, -0.06);
 }
+// Office 3 (game style): a bigger head and a baseball cap in the department's colour, like a tycoon game's staff
+function chibi(p, capColor) {
+  p.neck.scale.setScalar(1.38);
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.255, 16, 8, 0, Math.PI * 2, 0, Math.PI * 0.5), toon(capColor));
+  cap.position.y = 0.25; cap.castShadow = true; p.neck.add(cap);
+  p.neck.add(box(0.34, 0.035, 0.24, capColor, 0, 0.26, 0.2, false));          // the brim, over the face (+z)
+}
 
 // a desk with a monitor (screen toward the chair at +z) and a chair
 function makeDesk(accent, dept) {
@@ -486,8 +493,11 @@ export class OfficeView {
   // opts.layout: "bands" (Office 1: the lobby in the middle, rooms around it), "rect" (Office 2: one rectangle,
   // rooms packed in rows, the CEO in the front right corner) or "cubicle" (Office 3: the same rectangle as one open
   // floor; every agent works in a cubicle, departments are carpet areas, only the CEO has a room, with glass walls)
+  // opts.style "town" (Office 3 on screen): the open-plan floor as a game-style shop on a street, with a road,
+  // neighbours, trees, parked motorbikes and a neon sign; chunky staff in caps; the camera can rotate around it.
   constructor(container, viz, opts = {}) {
     this.layout = opts.layout || "bands";
+    this.town = opts.style === "town";
     this.container = container;
     this.viz = viz;
     this.people = new Map();       // node key -> workplace
@@ -531,6 +541,7 @@ export class OfficeView {
     this.sun.shadow.mapSize.set(2048, 2048);
     this.sun.shadow.bias = -0.0004; this.sun.shadow.normalBias = 0.02; this.sun.shadow.radius = 5;
     this.scene.add(this.sun, this.sun.target);
+    if (this.town) this.townLook();
 
     // post-processing for "High" quality: ambient occlusion (soft shading where things meet), SMAA edges
     this.composer = new EffectComposer(this.renderer);
@@ -620,6 +631,7 @@ export class OfficeView {
     ceoDesk.add(box(0.9, 0.6, 0.06, "#1d222c", 0.5, 1.3, -0.35), box(0.08, 0.3, 0.08, "#3b4254", 0.5, 1.0, -0.35, false));
     ceoDesk.add(box(0.7, 1.1, 0.12, "#22262f", 0, 0.95, 1.35), box(0.7, 0.1, 0.6, "#22262f", 0, 0.55, 1.05));
     this.ceo = makePerson("#2b3040", 11);
+    if (this.town) chibi(this.ceo, "#f2b705");
     poseSit(this.ceo); this.ceo.g.position.set(-LW / 2 + 3.4, 0, -0.15); this.ceo.g.rotation.y = Math.PI; lobby.add(this.ceo.g);
     lobby.add(box(1.8, 1.0, 0.1, "#151922", -LW / 2 + 3.4, 1.6, -LD / 2 + 0.5), box(1.9, 0.5, 0.5, "#8a5a33", -LW / 2 + 3.4, 0.25, -LD / 2 + 0.5));   // TV wall
     const sofa1 = makeSofa("#f2a33a"); sofa1.position.set(LW / 2 - 2.6, 0, -1.6); lobby.add(sofa1);
@@ -749,10 +761,11 @@ export class OfficeView {
     const zs = rooms.flatMap(r => [r.z - r.d / 2, r.z + r.d / 2]).concat([-LD / 2, LD / 2]);
     this.bounds = { minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs) };
     this.rects = [this.lobby, ...rooms].map(r => ({ x0: r.x - r.w / 2, x1: r.x + r.w / 2, z0: r.z - r.d / 2, z1: r.z + r.d / 2, y: r.y }));
-    const span = Math.max(this.bounds.maxX - this.bounds.minX, this.bounds.maxZ - this.bounds.minZ);
+    const span = Math.max(this.bounds.maxX - this.bounds.minX, this.bounds.maxZ - this.bounds.minZ) * (this.town ? 1.9 : 1);   // town: shadows on the street too
     Object.assign(this.sun.shadow.camera, { left: -span * 0.75, right: span * 0.75, top: span * 0.75, bottom: -span * 0.75, near: 1, far: span * 4 });
     this.sun.position.set(span * 0.45, span * 1.2, span * 0.3); this.sun.target.position.set(0, 0, 0);
     this.sun.shadow.camera.updateProjectionMatrix();
+    if (this.town) this.buildTown();
     this.buildNav();
     this.placeFloorLabels();
     for (const p of this.people.values()) if (p.walkIn) {
@@ -857,6 +870,7 @@ export class OfficeView {
     }
     const seed = hash(key);
     const person = makePerson(color, seed, OUTFITS[n.dept] || {});
+    if (this.town) chibi(person, cssColor(`--d-${n.dept}`, "#4aa3ff"));
     const seat = pos.clone().add(new THREE.Vector3(0, 0, 0.85));
     this.world.add(person.g);
     const label = labelSprite([this.roleName(n)]);
@@ -1086,6 +1100,182 @@ export class OfficeView {
 
   roleName(n) { return nm(n.def, "role") + (n.inst > 1 || (this.viz.extra?.[n.base] || 1) > 1 ? ` #${n.inst}` : ""); }
 
+  // ---------- Office 3: the game-style street ----------
+  // Sky, crisper sunlight and a camera that rotates (left drag), pans (right drag) and zooms, but stays above ground.
+  townLook() {
+    const c = document.createElement("canvas"); c.width = 4; c.height = 256;
+    const g = c.getContext("2d"), gr = g.createLinearGradient(0, 0, 0, 256);
+    gr.addColorStop(0, "#9fd6ff"); gr.addColorStop(1, "#eaf7ff"); g.fillStyle = gr; g.fillRect(0, 0, 4, 256);
+    const bg = new THREE.CanvasTexture(c); bg.colorSpace = THREE.SRGBColorSpace; this.scene.background = bg;
+    this.scene.environmentIntensity = 0.35;
+    this.scene.add(new THREE.HemisphereLight("#e3f4ff", "#9fd27f", 0.55));
+    this.sun.intensity = 2.3; this.sun.color.set("#fff4e0");
+    this.renderer.toneMappingExposure = 1.05;
+    Object.assign(this.controls, { enableRotate: true, minPolarAngle: 0.35, maxPolarAngle: 1.22, minZoom: 0.45, maxZoom: 5, rotateSpeed: 0.7 });
+    this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+    this.controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+    this.bubbles = [];
+  }
+
+  // The block around the office: grass, a sidewalk with tiles, a road with lane marks, neighbours with orange roofs,
+  // low-poly trees, street lamps, motorbikes at the door, a glass front with a neon strip and a neon shop sign.
+  buildTown() {
+    const b = this.bounds, T = new THREE.Group(); this.world.add(T);
+    this.townAnim = [];
+    const X0 = b.minX - 20, X1 = b.maxX + 24, Z0 = b.minZ - 18, Z1 = b.maxZ + 18;
+    const GW = X1 - X0, gcx = (X0 + X1) / 2;
+    const flat = (w, h, d, color, x, y, z, cast = false) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), toon(color));
+      m.position.set(x, y, z); m.receiveShadow = true; m.castShadow = cast; T.add(m); return m;
+    };
+    const glow = color => new THREE.MeshBasicMaterial({ color });
+    const signTex = (text, bg, fg, { w = 512, h = 128, neon = null, font = 64 } = {}) => {
+      const c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d");
+      g.fillStyle = bg; g.fillRect(0, 0, w, h);
+      if (neon) { g.strokeStyle = neon; g.lineWidth = 10; g.shadowColor = neon; g.shadowBlur = 24; g.strokeRect(10, 10, w - 20, h - 20); }
+      g.fillStyle = fg; g.font = `800 ${font}px "Bricolage Grotesque", "Segoe UI", sans-serif`; g.textAlign = "center"; g.textBaseline = "middle";
+      if (neon) { g.shadowColor = neon; g.shadowBlur = 18; }
+      let size = font; while (g.measureText(text).width > w - 50 && size > 16) { size -= 2; g.font = `800 ${size}px "Bricolage Grotesque", "Segoe UI", sans-serif`; }
+      g.fillText(text, w / 2, h / 2 + 2);
+      const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4; return tex;
+    };
+    const board = (text, bg, fg, w, h, opts) => new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: signTex(text, bg, fg, opts) }));
+
+    // ground: grass, then from the building's front: sidewalk, curb, road, curb, far sidewalk
+    flat(GW, 0.1, Z1 - Z0, "#9fd98a", gcx, -0.5, (Z0 + Z1) / 2);
+    const sw0 = b.maxZ + 0.2, swD = 4.4;
+    flat(GW, 0.16, swD, "#e8e2d6", gcx, -0.45, sw0 + swD / 2);
+    for (let x = X0 + 1.6; x < X1; x += 1.6) flat(0.05, 0.02, swD, "#d2cabb", x, -0.36, sw0 + swD / 2);
+    flat(GW, 0.26, 0.34, "#bdb5a7", gcx, -0.42, sw0 + swD + 0.17);
+    const r0 = sw0 + swD + 0.34, rD = 7.6, rz = r0 + rD / 2;
+    flat(GW, 0.08, rD, "#4a4f58", gcx, -0.52, rz);
+    for (let x = X0 + 1; x < X1; x += 3.4) flat(1.8, 0.02, 0.2, "#f4f1e8", x, -0.47, rz);
+    for (const e of [r0 + 0.4, r0 + rD - 0.4]) flat(GW, 0.02, 0.1, "#f4f1e8", gcx, -0.47, e);
+    flat(GW, 0.26, 0.34, "#bdb5a7", gcx, -0.42, r0 + rD + 0.17);
+    flat(GW, 0.16, 3.2, "#e8e2d6", gcx, -0.45, r0 + rD + 0.34 + 1.6);
+    // a side path along the right of the office, to the shop next door
+    flat(3.2, 0.16, b.maxZ - b.minZ + 0.4, "#e8e2d6", b.maxX + 2.0, -0.45, (b.minZ + b.maxZ) / 2);
+
+    // neighbours: a row of houses behind, a shop with a blue roof on the right, a boarding house on the left
+    const house = (x, z, w, d, h, wall, roof, sign, { flatRoof = false, face = 1 } = {}) => {
+      const g = new THREE.Group(); g.position.set(x, -0.45, z); T.add(g);
+      g.add(box(w, h, d, wall, 0, h / 2, 0));
+      if (flatRoof) g.add(box(w + 0.7, 0.55, d + 0.7, roof, 0, h + 0.27, 0));
+      else {
+        const r = new THREE.Mesh(new THREE.ConeGeometry(1, 2.4, 4), new THREE.MeshStandardMaterial({ color: roof, roughness: 0.7, flatShading: true }));
+        r.rotation.y = Math.PI / 4; r.scale.set((w + 0.9) / Math.SQRT2, 1, (d + 0.9) / Math.SQRT2); r.position.y = h + 1.2; r.castShadow = true; g.add(r);
+      }
+      const fz = face * (d / 2 + 0.04);
+      for (let fl = 0; fl < Math.floor(h / 2.3); fl++) for (let cx = -w / 2 + 1.3; cx <= w / 2 - 1.2; cx += 1.7) {
+        if (fl === 0 && Math.abs(cx) < 1.2) continue;                                           // the door's place
+        const win = box(0.95, 0.95, 0.06, "#a9dcff", cx, 1.35 + fl * 2.3, fz, false); g.add(win);
+        g.add(box(1.12, 0.12, 0.12, "#ffffff", cx, 0.82 + fl * 2.3, fz, false));               // sill
+      }
+      g.add(box(1.1, 2.0, 0.08, "#7a5233", 0, 1.0, fz, false));
+      if (sign) { const s = board(sign, "#ffffff", "#2b2f3a", Math.min(w - 1.2, 5), 0.95); s.position.set(0, Math.min(h - 0.6, 3.0), fz + face * 0.02); if (face < 0) s.rotation.y = Math.PI; g.add(s); }
+      return g;
+    };
+    const WALLS = ["#f2e3c9", "#e7eef5", "#f6d8c6", "#e3f0dc", "#efe6f6"];
+    let i = 0;
+    for (let x = b.minX + 4.5; x < b.maxX - 2; x += 11.5, i++)
+      house(x, b.minZ - 7.5, 9, 7, i % 2 ? 7 : 5.2, WALLS[i % WALLS.length], i % 3 === 1 ? "#d9633a" : "#e2783f", i === 0 ? "KOS MELATI" : null);
+    house(b.maxX + 9.5, b.maxZ - 4.5, 9, 8, 4.6, "#fdfcf8", "#3b6fd8", "WARUNG KOPI", { flatRoof: true });
+    house(b.maxX + 9.5, b.maxZ - 15, 8, 7, 4.2, "#fff7e8", "#e0503a", "KONTER PULSA", { flatRoof: true });
+    house(b.minX - 9.5, (b.minZ + b.maxZ) / 2, 9, 10, 7.2, "#f2e3c9", "#e2783f", "RUMAH MAKAN");
+    // a striped awning over the coffee shop's front
+    for (let k = 0; k < 6; k++) { const a = box(1.5, 0.08, 1.4, k % 2 ? "#ffffff" : "#e5484d", b.maxX + 9.5 - 3.75 + k * 1.5, 2.7, b.maxZ - 4.5 + 4.6, false); a.rotation.x = 0.35; T.add(a); }
+
+    // low-poly trees
+    const LEAF = ["#5cbf4a", "#4fae3f", "#74c95a", "#3f9e4a"];
+    const tree = (x, z, s = 1) => {
+      const g = new THREE.Group(); g.position.set(x, -0.45, z); T.add(g);
+      g.add(box(0.34 * s, 1.4 * s, 0.34 * s, "#8a5a33", 0, 0.7 * s, 0));
+      const m = new THREE.Mesh(new THREE.IcosahedronGeometry(1.25 * s, 0), new THREE.MeshStandardMaterial({ color: LEAF[Math.abs(Math.round(x * 7 + z * 3)) % LEAF.length], flatShading: true, roughness: 0.85 }));
+      m.position.y = 2.3 * s; m.castShadow = true; m.rotation.y = x; g.add(m);
+    };
+    for (let x = X0 + 4; x < X1 - 2; x += 9) tree(x, r0 + rD + 2.2, 1 + ((x * 13) % 3) * 0.12);
+    for (const [x, z, s] of [[b.minX - 3, b.minZ - 2, 1.1], [b.maxX + 3.2, b.minZ - 3, 1.2], [b.minX - 15, b.maxZ - 2, 1.3], [b.maxX + 17, b.minZ + 2, 1.2], [b.minX - 4, b.maxZ + 1.6, 0.8], [b.maxX + 15.5, b.maxZ + 1.6, 0.9], [b.minX + 18, b.minZ - 14, 1.2], [b.minX - 14, b.minZ - 10, 1.1]]) tree(x, z, s);
+
+    // street lamps along the curb
+    for (let x = X0 + 6; x < X1 - 3; x += 13) {
+      const z = sw0 + swD - 0.4;
+      T.add(box(0.13, 3.8, 0.13, "#3b4252", x, 1.45, z), box(0.08, 0.08, 0.9, "#3b4252", x, 3.3, z - 0.4));
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.16, 0.3), glow("#fff1b8")); head.position.set(x, 3.2, z - 0.8); T.add(head);
+    }
+
+    // motorbikes parked in front of the office, nose to the road
+    const BIKES = ["#e74c3c", "#3b82f6", "#f5c518", "#14b8a6", "#a855f7"];
+    const ex = this.entrance.x;
+    BIKES.forEach((col, k) => {
+      const g = new THREE.Group(); g.position.set(ex + 2.4 + k * 1.15, -0.37, sw0 + 2.7); g.rotation.y = (k % 2 ? 0.08 : -0.08); T.add(g);
+      g.add(box(0.36, 0.34, 1.25, col, 0, 0.55, 0), box(0.3, 0.12, 0.55, "#22252b", 0, 0.78, -0.18, false));
+      g.add(box(0.07, 0.6, 0.07, "#2b2f36", 0, 0.62, 0.58, false), box(0.62, 0.06, 0.06, "#22252b", 0, 0.94, 0.58, false));
+      for (const wz of [-0.5, 0.5]) { const w = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.085, 8, 16), toon("#1b1d22")); w.rotation.y = Math.PI / 2; w.position.set(0, 0.3, wz); w.castShadow = true; g.add(w); }
+    });
+
+    // the office's street front: low glass walls with a neon strip on top, a gap at the door with a coloured frame
+    const glassMat = new THREE.MeshStandardMaterial({ color: "#d3ecff", transparent: true, opacity: 0.3, roughness: 0.08, metalness: 0 });
+    const neon = glow("#b56cff");
+    const front = [[b.minX + 0.05, ex - 1.4], [ex + 1.4, b.maxX - 0.05]];
+    for (const [a, c] of front) if (c - a > 0.3) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(c - a, 1.25, 0.08), glassMat); m.position.set((a + c) / 2, 0.62, b.maxZ - 0.05); T.add(m);
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(c - a, 0.09, 0.12), neon); strip.position.set((a + c) / 2, 1.28, b.maxZ - 0.05); T.add(strip);
+    }
+    {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.25, b.maxZ - b.minZ), glassMat); m.position.set(b.maxX - 0.05, 0.62, (b.minZ + b.maxZ) / 2); T.add(m);
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.09, b.maxZ - b.minZ), neon); strip.position.set(b.maxX - 0.05, 1.28, (b.minZ + b.maxZ) / 2); T.add(strip);
+    }
+    T.add(box(0.18, 2.6, 0.18, "#ff7a3d", ex - 1.4, 1.3, b.maxZ - 0.05), box(0.18, 2.6, 0.18, "#ff7a3d", ex + 1.4, 1.3, b.maxZ - 0.05), box(3.0, 0.2, 0.2, "#ff7a3d", ex, 2.6, b.maxZ - 0.05));
+    const open = board("BUKA", "#2fbf5b", "#ffffff", 1.3, 0.5, { w: 256, h: 96, font: 60 }); open.position.set(ex + 2.1, 1.7, b.maxZ + 0.02); T.add(open);
+
+    // the neon shop sign on two posts at the front corner of the sidewalk
+    const sx = b.minX + 4.2, sz = sw0 + 1.2;
+    T.add(box(0.16, 3.0, 0.16, "#2b2f36", sx - 2.4, 1.05, sz), box(0.16, 3.0, 0.16, "#2b2f36", sx + 2.4, 1.05, sz));
+    const sign = board("NUSANTARA DIGITAL WORKS", "#2a0f45", "#ffffff", 5.4, 1.5, { w: 1024, h: 288, neon: "#d07bff", font: 96 });
+    sign.position.set(sx, 2.75, sz + 0.1); T.add(sign);
+    const back = sign.clone(); back.rotation.y = Math.PI; back.position.z = sz - 0.1; T.add(back);
+    const lamp = new THREE.PointLight("#c47bff", 6, 9, 1.6); lamp.position.set(sx, 2.6, sz + 1.2); T.add(lamp);
+    this.townAnim.push(time => { lamp.intensity = 5.5 + Math.sin(time * 3.1) * 0.6 + (Math.sin(time * 17) > 0.97 ? -3 : 0); });   // a little neon flicker
+
+    // two cars driving along the road, one each way
+    const car = (color, lane, dir, speed, offset) => {
+      const g = new THREE.Group(); T.add(g);
+      g.add(box(2.7, 0.65, 1.35, color, 0, 0.55, 0), box(1.55, 0.58, 1.25, "#dff3ff", -0.15, 1.15, 0));
+      for (const [wx, wz] of [[-0.9, -0.62], [0.9, -0.62], [-0.9, 0.62], [0.9, 0.62]]) {
+        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.2, 12), toon("#1b1d22")); w.rotation.x = Math.PI / 2; w.position.set(wx, 0.3, wz); g.add(w);
+      }
+      g.rotation.y = dir > 0 ? 0 : Math.PI;
+      this.townAnim.push(time => { const u = ((time * speed + offset) % GW + GW) % GW; g.position.set(dir > 0 ? X0 + u : X1 - u, -0.48, lane); });
+    };
+    car("#ff6b4a", rz + 1.8, 1, 4.2, 0);
+    car("#3fa7ff", rz - 1.8, -1, 3.4, GW * 0.45);
+  }
+
+  // a green "+1" that rises over a person who just finished a task, then fades (screen-sized like the labels)
+  bubble(p) {
+    const c = document.createElement("canvas"); c.width = 220; c.height = 96; const g = c.getContext("2d");
+    g.fillStyle = "#2fbf5b"; g.beginPath(); g.roundRect(6, 6, 208, 70, 35); g.fill();
+    g.beginPath(); g.moveTo(98, 74); g.lineTo(110, 92); g.lineTo(122, 74); g.fill();
+    g.fillStyle = "#ffffff"; g.font = "800 46px 'Bricolage Grotesque', 'Segoe UI', sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillText("✓ +1", 110, 43);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+    s.layers.set(1); s.renderOrder = 20; s.center.set(0.5, 0);
+    s.position.copy(p.person.g.position).setY(p.seat.y + 3.0);
+    s.userData = { px: [220 / 34, 96 / 34], mult: 1 };
+    this.scene.add(s); LABELS.add(s);
+    this.bubbles.push({ s, t0: this.clock.elapsedTime });
+  }
+  tickBubbles(time, dt) {
+    this.bubbles = (this.bubbles || []).filter(bb => {
+      const u = (time - bb.t0) / 1.9;
+      if (u >= 1) { this.scene.remove(bb.s); LABELS.delete(bb.s); bb.s.material.map.dispose(); bb.s.material.dispose(); return false; }
+      bb.s.position.y += dt * 1.1;
+      bb.s.material.opacity = u < 0.65 ? 1 : 1 - (u - 0.65) / 0.35;
+      return true;
+    });
+  }
+
   frame() {
     const b = this.bounds; if (!b) return;
     const cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2;
@@ -1098,7 +1288,8 @@ export class OfficeView {
     for (const r of this.rects) for (const x of [r.x0, r.x1]) for (const z of [r.z0, r.z1]) for (const y of [r.y - RIM, r.y + 4]) {
       v.set(x, y, z).applyMatrix4(inv).sub(tc); mx = Math.max(mx, Math.abs(v.x)); my = Math.max(my, Math.abs(v.y));
     }
-    this.fit = { mx: mx * 1.03, my: my * 1.2 };
+    const out = this.town ? 1.12 : 1;                         // town: a little of the street around; zoom out to see the block
+    this.fit = { mx: mx * 1.03 * out, my: my * 1.2 * out };
     this.camera.zoom = 1;
     this.resize();
   }
@@ -1156,6 +1347,7 @@ export class OfficeView {
       P.g.visible = !off;
 
       const idle = !working && !stalled && !limited && !off;
+      if (this.town && p.wasWorking && !working && cls.contains("done") && !reduced) this.bubble(p);   // a task done: a "+1" pops up
       if (working && !p.wasWorking && !p.path && !cheering && !reduced && p.room.route) this.fetchTask(p);
       p.wasWorking = working;
       // work came in while strolling: straight back to the desk, a little faster
@@ -1273,6 +1465,10 @@ export class OfficeView {
       return true;
     });
 
+    if (this.town) {
+      if (!reduced) for (const f of this.townAnim || []) f(time, dt);
+      this.tickBubbles(time, dt);
+    }
     this.controls.update();
     // labels keep the same size on screen at any zoom
     const wpp = (this.camera.top - this.camera.bottom) / this.camera.zoom / Math.max(1, this.container.clientHeight);
