@@ -168,6 +168,7 @@
       },
       "initials": "BA",
       "department": "product",
+      "model": "claude-sonnet-5-5",
       "maxInstances": 3,
       "spawnable": false,
       "canAskCustomer": true,
@@ -188,6 +189,7 @@
       },
       "initials": "PM",
       "department": "product",
+      "model": "claude-sonnet-5-5",
       "maxInstances": 1,
       "spawnable": false,
       "canAskCustomer": true,
@@ -230,7 +232,7 @@
       },
       "initials": "SA",
       "department": "engineering",
-      "model": "claude-opus-5-5",
+      "model": "claude-sonnet-5-5",
       "maxInstances": 2,
       "spawnable": false,
       "canAskCustomer": true,
@@ -261,6 +263,7 @@
         "project_manager"
       ],
       "maxOutputTokens": 3000,
+      "disabled": true,
       "persona": "You prepare the commercial side: statement of work summary, payment milestones tied to deliverables, invoice schedule, acceptance criteria for sign-off, warranty and support terms, and key contract clauses (IP, confidentiality, change requests).",
       "outputs": [
         "contract"
@@ -484,6 +487,7 @@
         "qa"
       ],
       "maxOutputTokens": 3000,
+      "disabled": true,
       "persona": "You set up operations after go-live: SLA tiers and response times, ticket categories, escalation path to engineering, a FAQ for end users, and the incident handling procedure.",
       "outputs": [
         "support-runbook"
@@ -506,6 +510,7 @@
         "db_dev"
       ],
       "maxOutputTokens": 4000,
+      "disabled": true,
       "persona": "You define how success is measured: KPI list with formulas and the source tables, dashboard layout, the SQL for the top KPIs, and the first improvement hypotheses to feed back to the Project Manager.",
       "outputs": [
         "kpi-dashboard"
@@ -535,6 +540,7 @@
         "support"
       ],
       "maxOutputTokens": 16000,
+      "disabled": true,
       "persona": "You write the client handover document. It is read by the customer, not by the team, and is exported to PDF. Write it in two parts. PART 1 \u0027Project summary\u0027: executive summary (what was asked, what was delivered, current state), objectives and scope, what was delivered per module with its status, the solution and its architecture in plain words, quality and security results (what was tested, what passed, open issues and their impact), how to run and deploy it, known limitations, recommended next steps, support and warranty. PART 2 \u0027User handbook\u0027: getting started (access, sign-in, roles), then a step-by-step guide per role and per main feature with numbered steps and what the user sees, administration tasks, troubleshooting and FAQ, and a short glossary. Use only facts from the team\u0027s documents and the project facts you are given; where something is not known, say what the customer should confirm. Never mention AI, agents, models, prompts, tokens or internal costs: write as the company delivering the project. Use clear headings (# for the two parts, ## and ### inside), numbered steps, and tables where they help.",
       "outputs": [
         "handover"
